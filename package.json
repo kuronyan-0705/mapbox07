@@ -1,0 +1,14 @@
+{
+  "name": "route128-topographic-mystery-director",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel deploy",
+    "deploy:prod": "vercel deploy --prod"
+  },
+  "devDependencies": {
+    "vercel": "^46.0.0"
+  }
+}
