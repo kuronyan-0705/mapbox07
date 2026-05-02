@@ -1,0 +1,74 @@
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #05070a;
+  color: #f4f1e8;
+  font-family: "Yu Gothic", "Hiragino Kaku Gothic ProN", Meiryo, system-ui, sans-serif;
+}
+
+#map {
+  position: fixed;
+  inset: 0;
+}
+
+.mapboxgl-ctrl-logo,
+.mapboxgl-ctrl-attrib,
+.mapboxgl-ctrl-bottom-left,
+.mapboxgl-ctrl-bottom-right {
+  display: none !important;
+}
+
+#title-card {
+  position: fixed;
+  left: clamp(28px, 5vw, 72px);
+  bottom: clamp(28px, 7vh, 86px);
+  max-width: min(720px, calc(100vw - 56px));
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity 900ms ease, transform 900ms ease;
+  pointer-events: none;
+  text-shadow: 0 3px 16px rgba(0, 0, 0, 0.76);
+}
+
+#title-card.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+#scene-kicker {
+  margin: 0 0 10px;
+  color: #f0d272;
+  font-size: clamp(13px, 1.25vw, 18px);
+  line-height: 1.45;
+  letter-spacing: 0;
+}
+
+#scene-title {
+  margin: 0;
+  color: #fffaf0;
+  font-size: clamp(28px, 4.4vw, 68px);
+  line-height: 1.14;
+  letter-spacing: 0;
+  font-weight: 800;
+}
+
+#status {
+  position: fixed;
+  right: 18px;
+  top: 16px;
+  max-width: min(360px, calc(100vw - 36px));
+  padding: 8px 10px;
+  border: 1px solid rgba(240, 210, 114, 0.35);
+  background: rgba(5, 7, 10, 0.68);
+  color: #f4f1e8;
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: none;
+}
+
+body.ready #status {
+  opacity: 0.35;
+}
