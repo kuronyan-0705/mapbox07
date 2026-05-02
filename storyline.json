@@ -1,0 +1,41 @@
+{
+  "scenes": [
+    {
+      "id": "route128-opening",
+      "title": "国道128号線：海岸線に残る記憶",
+      "lngLat": [140.34, 35.33],
+      "zoom": 11.5,
+      "pitch": 55,
+      "bearing": 18,
+      "duration": 9000,
+      "highlightRouteId": "route128_main"
+    },
+    {
+      "id": "ichinomiya-castle",
+      "title": "一宮城跡：消えた要塞",
+      "lngLat": [140.36, 35.37],
+      "zoom": 17,
+      "pitch": 60,
+      "bearing": 45,
+      "duration": 10000,
+      "overlayImage": "https://upload.wikimedia.org/wikipedia/commons/5/59/Old_map_of_Japan.jpg",
+      "overlayCoords": [
+        [140.3538, 35.3748],
+        [140.3678, 35.3748],
+        [140.3678, 35.3657],
+        [140.3538, 35.3657]
+      ],
+      "highlightRouteId": "route128_main"
+    },
+    {
+      "id": "katsuura-coast",
+      "title": "勝浦海岸：港町の境界線",
+      "lngLat": [140.315, 35.151],
+      "zoom": 14.2,
+      "pitch": 62,
+      "bearing": -28,
+      "duration": 11000,
+      "highlightRouteId": "route128_main"
+    }
+  ]
+}
