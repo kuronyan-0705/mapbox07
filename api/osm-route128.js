@@ -103,39 +103,73 @@ async function lookupRelationId(routeNumber) {
 }
 
 async function lookupRelationIdFromWikidata(ref) {
-  const sparql = `
-    SELECT ?item ?itemLabel ?osm WHERE {
-      ?item wdt:P402 ?osm.
-      {
-        ?item wdt:P1824 "${ref}".
+  const searches = [
+    { language: 'ja', text: `国道${ref}号` },
+    { language: 'en', text: `Japan National Route ${ref}` },
+    { language: 'en', text: `National Route ${ref} Japan` }
+  ];
+  const ids = [];
+  const searchErrors = [];
+
+  for (const search of searches) {
+    try {
+      const data = await fetchWikidataJson('https://www.wikidata.org/w/api.php?' + new URLSearchParams({
+        action: 'wbsearchentities',
+        format: 'json',
+        language: search.language,
+        uselang: search.language,
+        type: 'item',
+        limit: '10',
+        search: search.text
+      }));
+      for (const result of data.search || []) {
+        if (result.id && !ids.includes(result.id)) ids.push(result.id);
       }
-      UNION
-      {
-        ?item rdfs:label ?routeLabel.
-        FILTER(LANG(?routeLabel) IN ("ja", "en"))
-        FILTER(CONTAINS(STR(?routeLabel), "国道${ref}号") || CONTAINS(LCASE(STR(?routeLabel)), "national route ${ref}"))
-      }
-      SERVICE wikibase:label { bd:serviceParam wikibase:language "ja,en". }
+    } catch (error) {
+      searchErrors.push(`${search.text}: ${error.message}`);
     }
-    LIMIT 20
-  `;
-  const data = await fetchWikidataSparql(sparql);
-  const bindings = data.results?.bindings || [];
-  const preferred = bindings.find(({ itemLabel }) => {
-    const label = itemLabel?.value || '';
-    return label.includes(`国道${ref}号`) || label.toLowerCase().includes(`national route ${ref}`);
-  }) || bindings[0];
-  const relationId = Number(preferred?.osm?.value);
-  if (!Number.isFinite(relationId) || relationId <= 0) throw new Error(`国道${ref}号のOSM relation IDを取得できません`);
-  return relationId;
+  }
+
+  if (!ids.length) throw new Error(searchErrors.join(' | ') || `国道${ref}号のWikidata項目が見つかりません`);
+
+  const entityData = await fetchWikidataJson('https://www.wikidata.org/w/api.php?' + new URLSearchParams({
+    action: 'wbgetentities',
+    format: 'json',
+    ids: ids.slice(0, 20).join('|'),
+    props: 'claims|labels|descriptions',
+    languages: 'ja|en'
+  }));
+
+  const candidates = Object.values(entityData.entities || []).map((entity) => {
+    const relationIds = (entity.claims?.P402 || [])
+      .map((claim) => claim.mainsnak?.datavalue?.value)
+      .map((value) => Number(String(value).replace(/[^0-9]/g, '')))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const labelJa = entity.labels?.ja?.value || '';
+    const labelEn = entity.labels?.en?.value || '';
+    const descriptionJa = entity.descriptions?.ja?.value || '';
+    const descriptionEn = entity.descriptions?.en?.value || '';
+    const text = `${labelJa} ${labelEn} ${descriptionJa} ${descriptionEn}`.toLowerCase();
+    let score = 0;
+    if (labelJa.includes(`国道${ref}号`)) score += 100;
+    if (labelEn.toLowerCase().includes(`national route ${ref}`)) score += 90;
+    if (text.includes('japan')) score += 20;
+    if (text.includes('国道')) score += 20;
+    if (text.includes(ref.toLowerCase())) score += 10;
+    return { relationId: relationIds[0], score, label: labelJa || labelEn };
+  }).filter((candidate) => candidate.relationId);
+
+  candidates.sort((a, b) => b.score - a.score);
+  if (!candidates.length) throw new Error(`国道${ref}号のWikidata項目にOSM relation ID(P402)がありません`);
+  return candidates[0].relationId;
 }
 
-async function fetchWikidataSparql(sparql) {
+async function fetchWikidataJson(url) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20000);
+  const timer = setTimeout(() => controller.abort(), 12000);
   try {
-    const response = await fetch(`https://query.wikidata.org/sparql?${new URLSearchParams({ query: sparql, format: 'json' })}`, {
-      headers: { accept: 'application/sparql-results+json', 'user-agent': 'mapbox07-route-director/1.0' },
+    const response = await fetch(url, {
+      headers: { accept: 'application/json', 'user-agent': 'mapbox07-route-director/1.0' },
       signal: controller.signal
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
