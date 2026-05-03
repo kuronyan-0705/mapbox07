@@ -35,7 +35,7 @@
         const titleCard = document.getElementById('title-card');
         const sceneTitle = document.getElementById('scene-title');
         const status = document.getElementById('status');
-        const state = { storyline: null, sceneIndex: -1, autoplayTimer: null, energyFrame: null, revealStart: 0, revealDuration: 12000, routeCoords: [], smoothedBearing: 210 };
+        const state = { storyline: null, sceneIndex: -1, energyFrame: null, routeCoords: [], smoothedBearing: 210 };
 
         if (!token) status.textContent = 'Set MAPBOX_TOKEN in Vercel';
         mapboxgl.accessToken = token;
@@ -62,6 +62,7 @@
         });
 
         async function playRouteFilm() {
+          stopEnergyPulse();
           titleCard.classList.remove('visible');
           const start = state.routeCoords[0] || [140.12462, 35.61059];
           state.sceneIndex = 0;
@@ -72,13 +73,16 @@
           await wait(700);
           map.easeTo({ center: start, zoom: 12.85, pitch: 75, bearing: 320, duration: 2500, easing: easeInOutCubic, essential: true });
           await once(map, 'moveend');
-          resetReveal(7000);
-          runEnergyPulse();
           await followRouteCamera(8200);
-          await wait(250);
-          map.easeTo({ center: [140.08, 35.29], zoom: 8.9, pitch: 58, bearing: 26, duration: 5200, easing: easeInOutCubic, essential: true });
-          await once(map, 'moveend');
+          await smoothOutro();
           titleCard.classList.add('visible');
+        }
+
+        async function smoothOutro() {
+          setReveal(1, .95);
+          const currentBearing = map.getBearing();
+          map.easeTo({ center: [140.08, 35.29], zoom: 8.9, pitch: 58, bearing: currentBearing + 145, duration: 6500, easing: easeInOutCubic, essential: true });
+          await once(map, 'moveend');
         }
 
         async function goToScene(nextIndex, options = {}) {
@@ -89,8 +93,7 @@
           sceneTitle.textContent = scene.title;
           status.textContent = `${index + 1}/${scenes.length}: ${scene.title}`;
           titleCard.classList.remove('visible');
-          resetReveal((scene.duration || 9000) * .82);
-          runEnergyPulse();
+          startEnergyPulse(scene.duration || 9000);
           map.flyTo({ center: scene.lngLat, zoom: Math.max(scene.zoom, 12.4), pitch: Math.max(scene.pitch || 73, 73), bearing: scene.bearing + 14, duration: options.instant ? 0 : scene.duration, curve: 1.42, speed: .48, essential: true });
           await once(map, 'moveend');
           await waitForIdle(map);
@@ -148,6 +151,7 @@
         }
 
         async function followRouteCamera(duration) {
+          stopEnergyPulse();
           const path = buildPath(state.routeCoords);
           const started = performance.now();
           return new Promise((resolve) => {
@@ -157,18 +161,36 @@
               const point = pointAt(path, eased);
               const lookAhead = pointAt(path, Math.min(1, eased + .055));
               const targetBearing = bearingBetween(point.coord, lookAhead.coord);
-              state.smoothedBearing = smoothBearing(state.smoothedBearing, targetBearing, .045);
+              state.smoothedBearing = smoothBearing(state.smoothedBearing, targetBearing, .05);
+              const pulse = .72 + Math.pow(Math.sin((now - started) / 1000 * 6.2), 8) * .28;
+              setReveal(eased, pulse);
               const zoom = 13.05 + Math.sin(Math.PI * eased) * .72;
               const pitch = 74 - Math.max(0, eased - .88) * 44;
               map.jumpTo({ center: point.coord, zoom, pitch, bearing: state.smoothedBearing });
-              if (progress < 1) requestAnimationFrame(frame); else resolve();
+              if (progress < 1) requestAnimationFrame(frame); else { setReveal(1, pulse); resolve(); }
             };
             requestAnimationFrame(frame);
           });
         }
 
-        function resetReveal(duration) { state.revealStart = performance.now(); state.revealDuration = duration || 12000; setReveal(0, 0); }
-        function runEnergyPulse() { if (state.energyFrame) cancelAnimationFrame(state.energyFrame); const step = (now) => { const elapsed = now - state.revealStart; const reveal = Math.min(1, elapsed / state.revealDuration + .08); const pulse = .72 + Math.pow(Math.sin(elapsed / 1000 * 6.2), 8) * .28; setReveal(reveal, pulse); state.energyFrame = requestAnimationFrame(step); }; state.energyFrame = requestAnimationFrame(step); }
+        function startEnergyPulse(duration) {
+          stopEnergyPulse();
+          const started = performance.now();
+          setReveal(0, 0);
+          const step = (now) => {
+            const elapsed = now - started;
+            const reveal = Math.min(1, elapsed / duration);
+            const pulse = .72 + Math.pow(Math.sin(elapsed / 1000 * 6.2), 8) * .28;
+            setReveal(reveal, pulse);
+            state.energyFrame = requestAnimationFrame(step);
+          };
+          state.energyFrame = requestAnimationFrame(step);
+        }
+
+        function stopEnergyPulse() {
+          if (state.energyFrame) cancelAnimationFrame(state.energyFrame);
+          state.energyFrame = null;
+        }
 
         function setReveal(progress, pulse) {
           const p = clamp(progress, 0, 1);
