@@ -1,3 +1,4 @@
+const OSM_FULL_URL = 'https://api.openstreetmap.org/api/0.6/relation/9069158/full.json';
 const OVERPASS_URLS = [
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass-api.de/api/interpreter',
@@ -17,32 +18,57 @@ export default async function handler(request, response) {
     response.status(200).json(geojson);
   } catch (error) {
     response.status(502).json({
-      error: 'Failed to extract ordered Route 128 relation from OpenStreetMap Overpass API',
+      error: 'OpenStreetMapから国道128号リレーションを抽出できませんでした',
       detail: error.message
     });
   }
 }
 
 async function fetchOrderedRelationRoute128() {
+  const errors = [];
+
+  try {
+    const osm = await fetchOsmFullJson();
+    return buildRouteFromOsmFullJson(osm, OSM_FULL_URL);
+  } catch (error) {
+    errors.push(`${OSM_FULL_URL}: ${error.message}`);
+  }
+
   const query = `
     [out:json][timeout:90];
-    rel(${ROUTE_128_RELATION_ID})->.route;
-    .route out body;
-    way(r.route);
+    rel(${ROUTE_128_RELATION_ID});
+    out body;
+    way(r);
     out tags geom;
   `;
-  const errors = [];
 
   for (const url of OVERPASS_URLS) {
     try {
       const osm = await fetchOverpassJson(url, query);
-      return buildRouteFromOsm(osm, url);
+      return buildRouteFromOverpassJson(osm, url);
     } catch (error) {
       errors.push(`${url}: ${error.message}`);
     }
   }
 
   throw new Error(errors.join(' | '));
+}
+
+async function fetchOsmFullJson() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25000);
+
+  try {
+    const response = await fetch(OSM_FULL_URL, {
+      headers: { accept: 'application/json' },
+      signal: controller.signal
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function fetchOverpassJson(url, query) {
@@ -64,12 +90,44 @@ async function fetchOverpassJson(url, query) {
   }
 }
 
-function buildRouteFromOsm(osm, overpassUrl) {
-  const relation = osm.elements.find((element) => element.type === 'relation' && element.id === ROUTE_128_RELATION_ID);
-  if (!relation || !Array.isArray(relation.members)) throw new Error(`OSM relation ${ROUTE_128_RELATION_ID} was not returned`);
+function buildRouteFromOsmFullJson(osm, sourceUrl) {
+  const elements = osm.elements || [];
+  const relation = elements.find((element) => element.type === 'relation' && element.id === ROUTE_128_RELATION_ID);
+  if (!relation || !Array.isArray(relation.members)) throw new Error(`relation ${ROUTE_128_RELATION_ID} missing`);
+
+  const nodeById = new Map(
+    elements
+      .filter((element) => element.type === 'node' && typeof element.lon === 'number' && typeof element.lat === 'number')
+      .map((node) => [node.id, [node.lon, node.lat]])
+  );
 
   const wayById = new Map(
-    osm.elements
+    elements
+      .filter((element) => element.type === 'way' && Array.isArray(element.nodes) && element.nodes.length >= 2)
+      .map((way) => [way.id, way])
+  );
+
+  const orderedWays = relation.members
+    .filter((member) => member.type === 'way')
+    .map((member, memberIndex) => {
+      const way = wayById.get(member.ref);
+      if (!way || !isUsableRoadWay(way)) return null;
+      const geometry = way.nodes.map((nodeId) => nodeById.get(nodeId)).filter(Boolean);
+      if (geometry.length < 2) return null;
+      return { member, memberIndex, way: { ...way, geometry } };
+    })
+    .filter(Boolean);
+
+  return buildGeoJsonFromOrderedWays(relation, orderedWays, sourceUrl, 'OpenStreetMap API relation full JSON');
+}
+
+function buildRouteFromOverpassJson(osm, sourceUrl) {
+  const elements = osm.elements || [];
+  const relation = elements.find((element) => element.type === 'relation' && element.id === ROUTE_128_RELATION_ID);
+  if (!relation || !Array.isArray(relation.members)) throw new Error(`relation ${ROUTE_128_RELATION_ID} missing`);
+
+  const wayById = new Map(
+    elements
       .filter((element) => element.type === 'way' && Array.isArray(element.geometry) && element.geometry.length >= 2)
       .map((way) => [way.id, way])
   );
@@ -77,9 +135,17 @@ function buildRouteFromOsm(osm, overpassUrl) {
   const orderedWays = relation.members
     .filter((member) => member.type === 'way')
     .map((member, memberIndex) => ({ member, memberIndex, way: wayById.get(member.ref) }))
-    .filter((entry) => entry.way && isUsableRoadWay(entry.way));
+    .filter((entry) => entry.way && isUsableRoadWay(entry.way))
+    .map((entry) => ({
+      ...entry,
+      way: { ...entry.way, geometry: entry.way.geometry.map((point) => [point.lon, point.lat]) }
+    }));
 
-  if (!orderedWays.length) throw new Error('The Route 128 relation contains no usable highway ways with geometry');
+  return buildGeoJsonFromOrderedWays(relation, orderedWays, sourceUrl, 'OpenStreetMap Overpass ordered relation members');
+}
+
+function buildGeoJsonFromOrderedWays(relation, orderedWays, sourceUrl, sourceLabel) {
+  if (!orderedWays.length) throw new Error('relation contains no usable highway ways with geometry');
 
   const relationChains = buildRelationChains(orderedWays);
   const chains = relationChains
@@ -96,18 +162,18 @@ function buildRouteFromOsm(osm, overpassUrl) {
     .filter((chain) => chain.coordinates.length >= 2 && chain.lengthKm >= MIN_CHAIN_KM)
     .sort((a, b) => scoreChain(b) - scoreChain(a));
 
-  if (!chains.length) throw new Error('Could not build any continuous Route 128 relation chain');
+  if (!chains.length) throw new Error('could not build any continuous Route 128 relation chain');
 
   const cameraChain = chains[0];
 
   return {
     type: 'FeatureCollection',
     metadata: {
-      source: 'OpenStreetMap Overpass ordered relation members',
-      overpassUrl,
+      source: sourceLabel,
+      sourceUrl,
       relationId: ROUTE_128_RELATION_ID,
       relationName: relation.tags?.name || '国道128号',
-      extraction: 'Relation member way order, exact OSM way geometry, no hand drawn coordinates, no long gap stitching',
+      extraction: 'OSM relation member way order; exact OSM node geometry; no hand drawn coordinates',
       license: 'ODbL-1.0',
       direction: 'Chiba to Tateyama for production playback',
       orderedWayCount: orderedWays.length,
@@ -142,7 +208,7 @@ function buildRelationChains(orderedEntries) {
   let current = null;
 
   for (const entry of orderedEntries) {
-    const coords = entry.way.geometry.map((point) => [point.lon, point.lat]);
+    const coords = entry.way.geometry;
     if (!current) {
       current = { coordinates: coords, memberCount: 1, gaps: [] };
       continue;
