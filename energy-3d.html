@@ -83,6 +83,7 @@
           setRouteReveal(map, 0, .98);
           await followRouteCamera(map, 8200);
           setRouteReveal(map, 1, 1);
+          startEnergyFlow(map);
           await smoothOutro(map);
           titleCard.classList.add('visible');
         }
@@ -197,7 +198,7 @@
           const step = (now) => {
             const progress = ((now - started) / 2450) % 1;
             const pulse = .8 + Math.pow(Math.sin((now - started) / 1000 * 6.8), 8) * .2;
-            setRouteReveal(map, progress, pulse);
+            setCompletedRouteFlow(map, progress, pulse);
             state.energyFrame = requestAnimationFrame(step);
           };
           state.energyFrame = requestAnimationFrame(step);
@@ -210,6 +211,14 @@
           setGradient(map, 'route128-glow-inner', revealGlowGradient('#ff2a16', .72 + pulse * .2, progress));
           setGradient(map, 'route128-hot-core', revealGlowGradient('#ff6a38', .86 + pulse * .12, progress));
           setGradient(map, 'route128-core', revealCoreGradient(progress));
+        }
+
+        function setCompletedRouteFlow(map, progress, pulse) {
+          setGradient(map, 'route128-reflection', completedFlowGradient('#ff1208', .12 + pulse * .12, progress, .075));
+          setGradient(map, 'route128-glow-outer', completedFlowGradient('#ff0808', .56 + pulse * .24, progress, .05));
+          setGradient(map, 'route128-glow-inner', completedFlowGradient('#ff2a16', .72 + pulse * .2, progress, .038));
+          setGradient(map, 'route128-hot-core', completedFlowGradient('#ff6a38', .86 + pulse * .12, progress, .026));
+          setGradient(map, 'route128-core', completedFlowGradient('#fff0dc', .96, progress, .018));
         }
 
         function revealGlowGradient(color, opacity, progress) {
@@ -230,6 +239,15 @@
           if (p >= 1) return solidGradient(lit);
           const edge = Math.min(1, p + .001);
           return ['interpolate', ['linear'], ['line-progress'], 0, lit, p, lit, edge, guide, 1, guide];
+        }
+
+        function completedFlowGradient(color, opacity, progress, width) {
+          const p = clamp(progress, 0, 1);
+          const start = clamp(p - width, 0, 1);
+          const end = clamp(p + width, 0, 1);
+          const base = hexToRgba(color, opacity * .62);
+          const hot = hexToRgba(color, opacity);
+          return ['interpolate', ['linear'], ['line-progress'], 0, base, start, base, p, hot, end, base, 1, base];
         }
 
         function buildPath(coords) { const segments = []; let total = 0; for (let i = 0; i < coords.length - 1; i++) { const a = coords[i]; const b = coords[i + 1]; const length = distance(a, b); segments.push({ a, b, start: total, end: total + length, length }); total += length; } return { segments, total }; }
