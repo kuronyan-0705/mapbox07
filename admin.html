@@ -16,6 +16,7 @@
       section { grid-column: span 6; background: rgba(24, 33, 38, .92); border: 1px solid var(--line); border-radius: 8px; padding: 18px; box-shadow: 0 20px 60px rgba(0,0,0,.28); }
       .wide { grid-column: 1 / -1; }
       h2 { margin: 0 0 14px; font-size: 16px; }
+      h3 { margin: 0 0 10px; font-size: 14px; color: #f4dfd7; }
       label { display: grid; gap: 6px; margin: 0 0 12px; color: #dce4e2; font-weight: 700; }
       input { width: 100%; min-height: 40px; border: 1px solid #405158; border-radius: 6px; background: #0d1417; color: var(--text); padding: 8px 10px; font: inherit; }
       input[type="color"] { padding: 3px; }
@@ -25,9 +26,17 @@
       button.secondary, a.secondary { background: #121a1f; border-color: #405158; color: #dce4e2; }
       button.capture { background: linear-gradient(180deg, #7ee3ff, #2477c4); border-color: #23628f; color: #03111c; }
       button.auto { background: linear-gradient(180deg, #a1ff9a, #2b9b4b); border-color: #23733d; color: #07150c; }
+      button.small { min-height: 34px; padding: 7px 10px; font-size: 12px; }
       #message { color: #ffd9cf; min-height: 24px; }
       pre { margin: 0; padding: 14px; max-height: 280px; overflow: auto; border: 1px solid #34454c; border-radius: 6px; background: #0b1114; color: #cfe4e4; white-space: pre-wrap; }
-      @media (max-width: 760px) { section { grid-column: 1 / -1; } header { display: block; } .row { grid-template-columns: 1fr; } }
+      .candidate-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+      .candidate-list { display: grid; gap: 10px; }
+      .candidate { border: 1px solid #3b4c53; border-radius: 8px; padding: 12px; background: #10181c; }
+      .candidate strong { display: block; color: #fff3ef; font-size: 14px; margin-bottom: 4px; }
+      .candidate code { color: #bfe9ef; }
+      .meta { color: #98abab; font-size: 12px; margin: 4px 0 10px; }
+      .empty { border: 1px dashed #3b4c53; border-radius: 8px; padding: 12px; color: var(--muted); }
+      @media (max-width: 760px) { section { grid-column: 1 / -1; } header { display: block; } .row, .candidate-grid { grid-template-columns: 1fr; } }
     </style>
   </head>
   <body>
@@ -35,7 +44,7 @@
       <header>
         <div>
           <h1>国道演出 管理画面</h1>
-          <p>国道番号だけで全国の国道を検索し、必要に応じて地点や演出を補正できます。</p>
+          <p>国道番号から候補を取得し、起点・終点を確認してから撮影用ルートを生成します。</p>
         </div>
         <div class="actions">
           <a class="button secondary" href="./energy-3d.html" target="_blank" rel="noreferrer">現在の映像を開く</a>
@@ -62,6 +71,16 @@
           <label>赤線カラー<input name="red" type="color" value="#ff1208"></label>
         </section>
 
+        <section class="wide">
+          <h2>起点・終点候補</h2>
+          <div class="actions">
+            <button type="button" id="endpointFetch" class="auto">起点・終点候補を取得</button>
+            <button type="button" id="swapEndpoints" class="secondary">起点・終点を入れ替える</button>
+          </div>
+          <p id="endpointSummary">候補を取得すると、ここに開始地点・終了地点の候補が表示されます。</p>
+          <div id="candidateArea" class="candidate-grid"></div>
+        </section>
+
         <section>
           <h2>カメラ</h2>
           <div class="row"><label>開始ズーム<input name="introZoom" type="number" step="0.05" value="12.55"></label><label>追従ズーム<input name="followZoom" type="number" step="0.05" value="13.05"></label></div>
@@ -79,7 +98,7 @@
 
         <section class="wide">
           <div class="actions">
-            <button type="button" id="auto" class="auto">国道番号から自動設定</button>
+            <button type="button" id="auto" class="auto">確定した起終点でルート生成</button>
             <button type="button" id="save">保存</button>
             <button type="button" id="preview">保存してプレビュー</button>
             <button type="button" id="capture" class="capture">保存してブラウザ録画DL</button>
@@ -95,30 +114,94 @@
 
     <script>
       const STORAGE_KEY = 'routeDirectorPreset';
-      const ROUTE_HINTS = {
-        '134': {
-          start: [139.686972, 35.266611],
-          end: [139.316528, 35.311083],
-          bounds: [139.25, 35.12, 139.78, 35.38]
-        }
-      };
       const form = document.getElementById('form');
       const output = document.getElementById('output');
       const message = document.getElementById('message');
+      const endpointSummary = document.getElementById('endpointSummary');
+      const candidateArea = document.getElementById('candidateArea');
       const defaults = readForm();
+      let endpointCandidates = null;
       loadSaved(); render();
       form.addEventListener('input', render);
       document.getElementById('save').addEventListener('click', () => { save(); message.textContent = '保存しました。energy-3d.htmlを開くとこの設定で再生されます。'; });
       document.getElementById('preview').addEventListener('click', () => { save(); window.open('./energy-3d.html', '_blank', 'noreferrer'); });
       document.getElementById('capture').addEventListener('click', () => { save(); window.open('./capture.html', '_blank', 'noreferrer'); });
-      document.getElementById('reset').addEventListener('click', () => { localStorage.removeItem(STORAGE_KEY); writeForm(defaults); save(); message.textContent = '国道128号の基準設定に戻しました。'; });
+      document.getElementById('reset').addEventListener('click', () => { localStorage.removeItem(STORAGE_KEY); writeForm(defaults); endpointCandidates = null; renderCandidates(); save(); message.textContent = '国道128号の基準設定に戻しました。'; });
       document.getElementById('test').addEventListener('click', () => testRoute(false));
       document.getElementById('auto').addEventListener('click', () => testRoute(true));
+      document.getElementById('endpointFetch').addEventListener('click', fetchEndpointCandidates);
+      document.getElementById('swapEndpoints').addEventListener('click', swapEndpoints);
+
+      async function fetchEndpointCandidates() {
+        const preset = readForm();
+        if (!preset.routeNumber) { message.textContent = '国道番号を入力してください。'; return; }
+        endpointSummary.textContent = `国道${preset.routeNumber}号の起点・終点候補を取得しています...`;
+        candidateArea.innerHTML = '';
+        try {
+          const response = await fetch(`/api/route-endpoints?${new URLSearchParams({ routeNumber: preset.routeNumber })}`, { cache: 'no-store' });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.detail || data.error || `API ${response.status}`);
+          endpointCandidates = data;
+          if (data.relationId) form.elements.relationId.value = String(data.relationId);
+          if (Array.isArray(data.bounds)) form.elements.bounds.value = data.bounds.join(',');
+          form.elements.title.value = `国道${data.routeNumber}号線のミステリー`;
+          form.elements.kicker.value = `Route ${data.routeNumber} / OpenStreetMap`;
+          renderCandidates();
+          save();
+          endpointSummary.textContent = `国道${data.routeNumber}号の候補を取得しました。候補を確認して開始・終了に採用してください。`;
+        } catch (error) {
+          endpointSummary.textContent = `候補取得失敗: ${error.message}`;
+        }
+      }
+
+      function renderCandidates() {
+        if (!endpointCandidates) {
+          candidateArea.innerHTML = '';
+          endpointSummary.textContent = '候補を取得すると、ここに開始地点・終了地点の候補が表示されます。';
+          return;
+        }
+        candidateArea.innerHTML = [candidateColumn('起点候補', 'start', endpointCandidates.start || []), candidateColumn('終点候補', 'end', endpointCandidates.end || [])].join('');
+        candidateArea.querySelectorAll('[data-use]').forEach((button) => {
+          button.addEventListener('click', () => useCandidate(button.dataset.use, Number(button.dataset.index)));
+        });
+      }
+
+      function candidateColumn(title, role, candidates) {
+        const body = candidates.length ? candidates.map((candidate, index) => `
+          <div class="candidate">
+            <strong>${escapeHtml(candidate.label || '名称未取得')}</strong>
+            <code>${candidate.lngLat.join(',')}</code>
+            <div class="meta">情報源: ${escapeHtml(candidate.source || 'unknown')} / 信頼度: ${escapeHtml(candidate.confidence || 'unknown')}</div>
+            <button type="button" class="small" data-use="${role}" data-index="${index}">${role === 'start' ? '開始地点に使う' : '終了地点に使う'}</button>
+          </div>
+        `).join('') : '<div class="empty">候補が見つかりませんでした。座標を手入力してください。</div>';
+        return `<div><h3>${title}</h3><div class="candidate-list">${body}</div></div>`;
+      }
+
+      function useCandidate(role, index) {
+        const candidate = endpointCandidates?.[role]?.[index];
+        if (!candidate?.lngLat) return;
+        form.elements[role].value = candidate.lngLat.join(',');
+        const preset = readForm();
+        const nextBounds = endpointCandidates.bounds || boundsFromPair(preset.start, preset.end) || preset.bounds;
+        if (nextBounds) form.elements.bounds.value = nextBounds.join(',');
+        save();
+        message.textContent = `${role === 'start' ? '開始地点' : '終了地点'}に「${candidate.label}」を採用しました。`;
+      }
+
+      function swapEndpoints() {
+        const start = form.elements.start.value;
+        const end = form.elements.end.value;
+        form.elements.start.value = end;
+        form.elements.end.value = start;
+        save();
+        message.textContent = '開始地点と終了地点を入れ替えました。';
+      }
 
       async function testRoute(applyResult) {
         const preset = readForm();
         const params = routeParams(preset, applyResult);
-        message.textContent = applyResult ? '国道番号からOSMルートを自動設定しています...' : 'OSMからルートを取得しています...';
+        message.textContent = applyResult ? '確定した起終点でOSMルートを生成しています...' : 'OSMからルートを取得しています...';
         try {
           const response = await fetch(`/api/osm-route128?${params}`, { cache: 'no-store' });
           const data = await response.json();
@@ -138,14 +221,10 @@
 
       function routeParams(preset, autoMode) {
         const params = new URLSearchParams({ routeNumber: preset.routeNumber });
-        const hint = autoMode ? ROUTE_HINTS[String(preset.routeNumber)] : null;
-        if (hint?.start) params.set('start', hint.start.join(','));
-        if (hint?.end) params.set('end', hint.end.join(','));
-        if (hint?.bounds) params.set('bounds', hint.bounds.join(','));
         if (!autoMode && preset.relationId) params.set('relationId', preset.relationId);
-        if (!autoMode && Array.isArray(preset.start)) params.set('start', preset.start.join(','));
-        if (!autoMode && Array.isArray(preset.end)) params.set('end', preset.end.join(','));
-        if (!autoMode && Array.isArray(preset.bounds)) params.set('bounds', preset.bounds.join(','));
+        if (Array.isArray(preset.start)) params.set('start', preset.start.join(','));
+        if (Array.isArray(preset.end)) params.set('end', preset.end.join(','));
+        if (Array.isArray(preset.bounds)) params.set('bounds', preset.bounds.join(','));
         return params;
       }
       function save() { const preset = readForm(); localStorage.setItem(STORAGE_KEY, JSON.stringify(preset)); render(); }
@@ -155,7 +234,9 @@
       function writeForm(values) { for (const [key, value] of Object.entries(values)) { const field = form.elements[key]; if (!field) continue; field.value = Array.isArray(value) ? value.join(',') : (value ?? ''); } render(); }
       function coord(value) { if (!String(value || '').trim()) return null; const parts = String(value).split(',').map((item) => Number(item.trim())); return parts.length === 2 && parts.every(Number.isFinite) && !(parts[0] === 0 && parts[1] === 0) ? parts : null; }
       function bounds(value) { if (!String(value || '').trim()) return null; const parts = String(value).split(',').map((item) => Number(item.trim())); return parts.length === 4 && parts.every(Number.isFinite) && !parts.every((part) => part === 0) ? parts : null; }
+      function boundsFromPair(start, end) { if (!start || !end) return null; const pad = 0.08; return [Math.min(start[0], end[0]) - pad, Math.min(start[1], end[1]) - pad, Math.max(start[0], end[0]) + pad, Math.max(start[1], end[1]) + pad].map((value) => Math.round(value * 100000) / 100000); }
       function centerOfBounds(value) { return Array.isArray(value) && value.length === 4 ? [(value[0] + value[2]) / 2, (value[1] + value[3]) / 2] : null; }
+      function escapeHtml(value) { return String(value).replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char])); }
     </script>
   </body>
 </html>
