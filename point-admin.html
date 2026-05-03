@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>地点ズーム演出 管理画面</title>
+    <style>
+      :root { color-scheme: dark; --panel: #182126; --line: #314047; --text: #f2f5f4; --muted: #a9b6b6; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: radial-gradient(circle at 18% 0%, #25323a 0, #10161a 42%, #090d10 100%); color: var(--text); font: 14px/1.6 system-ui, -apple-system, BlinkMacSystemFont, "Yu Gothic", Meiryo, sans-serif; }
+      main { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; padding: 28px 0 40px; }
+      header { display: flex; justify-content: space-between; gap: 16px; align-items: end; margin-bottom: 20px; }
+      h1 { margin: 0; font-size: clamp(24px, 3vw, 40px); line-height: 1.2; letter-spacing: 0; }
+      p { margin: 6px 0 0; color: var(--muted); }
+      .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; }
+      section { grid-column: span 6; background: rgba(24, 33, 38, .92); border: 1px solid var(--line); border-radius: 8px; padding: 18px; box-shadow: 0 20px 60px rgba(0,0,0,.28); }
+      .wide { grid-column: 1 / -1; }
+      h2 { margin: 0 0 14px; font-size: 16px; }
+      label { display: grid; gap: 6px; margin: 0 0 12px; color: #dce4e2; font-weight: 700; }
+      input { width: 100%; min-height: 40px; border: 1px solid #405158; border-radius: 6px; background: #0d1417; color: var(--text); padding: 8px 10px; font: inherit; }
+      input[type="color"] { padding: 3px; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+      button, a.button { appearance: none; border: 1px solid #5a2b25; border-radius: 6px; background: linear-gradient(180deg, #ff4a2e, #be281c); color: white; min-height: 42px; padding: 9px 14px; font: 800 14px/1 system-ui, sans-serif; text-decoration: none; cursor: pointer; }
+      button.secondary, a.secondary { background: #121a1f; border-color: #405158; color: #dce4e2; }
+      button.capture { background: linear-gradient(180deg, #7ee3ff, #2477c4); border-color: #23628f; color: #03111c; }
+      #message { color: #ffd9cf; min-height: 24px; }
+      pre { margin: 0; padding: 14px; max-height: 300px; overflow: auto; border: 1px solid #34454c; border-radius: 6px; background: #0b1114; color: #cfe4e4; white-space: pre-wrap; }
+      @media (max-width: 760px) { section { grid-column: 1 / -1; } header { display: block; } .row { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>地点ズーム演出 管理画面</h1>
+          <p>地球俯瞰から特定地点へ降下し、地表ぎりぎりでドローンのように旋回する演出を設定します。</p>
+        </div>
+        <div class="actions">
+          <a class="button secondary" href="./admin.html">国道管理へ</a>
+          <a class="button secondary" href="./point-zoom.html" target="_blank" rel="noreferrer">地点映像を開く</a>
+        </div>
+      </header>
+
+      <form id="form" class="grid">
+        <section>
+          <h2>地点</h2>
+          <label>地点名<input name="pointTitle" value="一宮城跡"></label>
+          <label>小見出し<input name="pointKicker" value="Point / Drone orbit"></label>
+          <label>中心座標 lng,lat<input name="pointLngLat" value="140.3642,35.3741"></label>
+          <label>開始時の俯瞰中心 lng,lat<input name="startCenter" value="138.4,36.2"></label>
+          <label>マーカー色<input name="markerColor" type="color" value="#ff1208"></label>
+        </section>
+
+        <section>
+          <h2>カメラ</h2>
+          <div class="row"><label>開始ズーム<input name="startZoom" type="number" step="0.05" value="4.2"></label><label>接近ズーム<input name="approachZoom" type="number" step="0.05" value="15.6"></label></div>
+          <div class="row"><label>地表旋回ズーム<input name="groundZoom" type="number" step="0.05" value="18.45"></label><label>ピッチ<input name="pitch" type="number" step="1" value="82"></label></div>
+          <div class="row"><label>地形立体感<input name="terrain" type="number" step="0.05" value="2.1"></label><label>旋回回数<input name="orbitTurns" type="number" step="0.05" value="1.15"></label></div>
+          <div class="row"><label>接近時間 ms<input name="approachDuration" type="number" step="100" value="7800"></label><label>旋回時間 ms<input name="orbitDuration" type="number" step="100" value="9000"></label></div>
+        </section>
+
+        <section class="wide">
+          <div class="actions">
+            <button type="button" id="save">保存</button>
+            <button type="button" id="preview">保存してプレビュー</button>
+            <button type="button" id="record" class="capture">保存して録画用表示</button>
+            <button type="button" id="reset" class="secondary">初期値に戻す</button>
+          </div>
+          <p id="message"></p>
+        </section>
+
+        <section class="wide"><h2>現在の設定</h2><pre id="output"></pre></section>
+      </form>
+    </main>
+
+    <script>
+      const STORAGE_KEY = 'pointDirectorPreset';
+      const form = document.getElementById('form');
+      const output = document.getElementById('output');
+      const message = document.getElementById('message');
+      const defaults = readForm();
+      loadSaved(); render();
+      form.addEventListener('input', render);
+      document.getElementById('save').addEventListener('click', () => { save(); message.textContent = '保存しました。point-zoom.htmlを開くとこの設定で再生されます。'; });
+      document.getElementById('preview').addEventListener('click', () => { save(); window.open('./point-zoom.html', '_blank', 'noreferrer'); });
+      document.getElementById('record').addEventListener('click', () => { save(); window.open('./point-zoom.html?record=1', '_blank', 'noreferrer'); });
+      document.getElementById('reset').addEventListener('click', () => { localStorage.removeItem(STORAGE_KEY); writeForm(defaults); save(); message.textContent = '初期値に戻しました。'; });
+
+      function save() { const preset = readForm(); localStorage.setItem(STORAGE_KEY, JSON.stringify(preset)); render(); }
+      function loadSaved() { try { const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); if (Object.keys(saved).length) writeForm(saved); } catch (error) {} }
+      function render() { output.textContent = JSON.stringify(readForm(), null, 2); }
+      function readForm() {
+        const data = new FormData(form);
+        const get = (name) => String(data.get(name) || '').trim();
+        const num = (name) => Number(get(name));
+        return {
+          pointTitle: get('pointTitle'), pointKicker: get('pointKicker'), pointLngLat: coord(get('pointLngLat')), startCenter: coord(get('startCenter')),
+          markerColor: get('markerColor'), startZoom: num('startZoom'), approachZoom: num('approachZoom'), groundZoom: num('groundZoom'),
+          pitch: num('pitch'), terrain: num('terrain'), orbitTurns: num('orbitTurns'), approachDuration: num('approachDuration'), orbitDuration: num('orbitDuration')
+        };
+      }
+      function writeForm(values) { for (const [key, value] of Object.entries(values)) { const field = form.elements[key]; if (!field) continue; field.value = Array.isArray(value) ? value.join(',') : (value ?? ''); } render(); }
+      function coord(value) { const parts = String(value || '').split(',').map((item) => Number(item.trim())); return parts.length === 2 && parts.every(Number.isFinite) ? parts : null; }
+    </script>
+  </body>
+</html>
