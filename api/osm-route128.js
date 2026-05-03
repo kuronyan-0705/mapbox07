@@ -10,6 +10,7 @@ const TATEYAMA_END = [139.86315, 34.99318];
 const MAX_RELATION_GAP_KM = 0.35;
 const MAX_PLAYBACK_CHAIN_GAP_KM = 18;
 const MIN_CHAIN_KM = 1;
+const PARALLEL_DUPLICATE_KM = 1.15;
 
 export default async function handler(request, response) {
   response.setHeader('cache-control', 'no-store');
@@ -176,15 +177,17 @@ function buildGeoJsonFromOrderedWays(relation, orderedWays, sourceUrl, sourceLab
       sourceUrl,
       relationId: ROUTE_128_RELATION_ID,
       relationName: relation.tags?.name || '国道128号',
-      extraction: 'OSM relation member way order; exact OSM node geometry; multiple relation chains assembled from Chiba side',
+      extraction: 'OSM relation member way order; exact OSM node geometry; duplicate parallel chains skipped',
       license: 'ODbL-1.0',
       direction: 'Chiba to Tateyama for production playback',
       orderedWayCount: orderedWays.length,
       chainCount: chains.length,
       usedChainCount: cameraChain.usedChainCount,
+      skippedParallelChains: cameraChain.skippedParallelChains,
       cameraPathKm: round(pathLengthKm(cameraChain.coordinates), 2),
       rawSegmentKm: round(pathLengthKm(allSegments), 2),
       cameraConnectorGapsKm: cameraChain.connectorGapsKm,
+      parallelDuplicateKm: PARALLEL_DUPLICATE_KM,
       maxRelationGapKm: MAX_RELATION_GAP_KM,
       maxPlaybackChainGapKm: MAX_PLAYBACK_CHAIN_GAP_KM,
       extractedAt: new Date().toISOString()
@@ -216,8 +219,10 @@ function buildPlaybackChain(chains) {
   const firstIndex = remaining.findIndex((chain) => chain.startDistanceKm < 35 || chain.coordinates[0][1] > 35.45);
   const first = remaining.splice(firstIndex >= 0 ? firstIndex : 0, 1)[0];
   let coordinates = first.coordinates.slice();
+  const acceptedChains = [first];
   const connectorGapsKm = [];
   let usedChainCount = 1;
+  let skippedParallelChains = 0;
 
   while (remaining.length) {
     const last = coordinates[coordinates.length - 1];
@@ -226,22 +231,55 @@ function buildPlaybackChain(chains) {
         const forwardDistance = distanceKm(last, chain.coordinates[0]);
         const reverseDistance = distanceKm(last, chain.coordinates[chain.coordinates.length - 1]);
         return forwardDistance <= reverseDistance
-          ? { index, distanceKm: forwardDistance, coordinates: chain.coordinates }
-          : { index, distanceKm: reverseDistance, coordinates: chain.coordinates.slice().reverse() };
+          ? { index, distanceKm: forwardDistance, coordinates: chain.coordinates, chain }
+          : { index, distanceKm: reverseDistance, coordinates: chain.coordinates.slice().reverse(), chain };
       })
       .sort((a, b) => a.distanceKm - b.distanceKm);
 
-    const next = candidates[0];
+    const next = candidates.find((candidate) => !isParallelDuplicate(candidate.chain, acceptedChains));
+    const duplicate = candidates.find((candidate) => isParallelDuplicate(candidate.chain, acceptedChains));
+    if (duplicate && (!next || duplicate.distanceKm <= next.distanceKm + 0.6)) {
+      remaining.splice(duplicate.index, 1);
+      skippedParallelChains += 1;
+      continue;
+    }
+
     if (!next || next.distanceKm > MAX_PLAYBACK_CHAIN_GAP_KM) break;
 
     connectorGapsKm.push(round(next.distanceKm, 2));
     coordinates = appendCoordinates(coordinates, next.coordinates);
+    acceptedChains.push(next.chain);
     remaining.splice(next.index, 1);
     usedChainCount += 1;
   }
 
   const oriented = orientChibaToTateyama(deduplicate(coordinates));
-  return { coordinates: oriented, connectorGapsKm, usedChainCount };
+  return { coordinates: oriented, connectorGapsKm, usedChainCount, skippedParallelChains };
+}
+
+function isParallelDuplicate(candidate, acceptedChains) {
+  if (candidate.lengthKm > 18) return false;
+  const sample = sampleCoordinates(candidate.coordinates, 7);
+  const nearCount = sample.filter((coord) => acceptedChains.some((chain) => minDistanceToPathKm(coord, chain.coordinates) < PARALLEL_DUPLICATE_KM)).length;
+  return nearCount / sample.length >= 0.72;
+}
+
+function sampleCoordinates(coords, count) {
+  if (coords.length <= count) return coords;
+  const result = [];
+  for (let index = 0; index < count; index++) {
+    result.push(coords[Math.round(index * (coords.length - 1) / (count - 1))]);
+  }
+  return result;
+}
+
+function minDistanceToPathKm(coord, path) {
+  let min = Infinity;
+  const stride = Math.max(1, Math.floor(path.length / 80));
+  for (let index = 0; index < path.length; index += stride) {
+    min = Math.min(min, distanceKm(coord, path[index]));
+  }
+  return min;
 }
 
 function buildRelationChains(orderedEntries) {
