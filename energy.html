@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Route 128 Red Energy Director</title>
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.11.0/mapbox-gl.css" rel="stylesheet">
+    <style>
+      html, body, #map { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #030406; }
+      .mapboxgl-ctrl-logo, .mapboxgl-ctrl-attrib, .mapboxgl-ctrl-bottom-left, .mapboxgl-ctrl-bottom-right { display: none !important; }
+      #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at 50% 52%, transparent 0, rgba(0,0,0,.18) 42%, rgba(0,0,0,.72) 100%); mix-blend-mode: multiply; }
+      #title-card { position: fixed; left: clamp(28px, 5vw, 72px); bottom: clamp(28px, 7vh, 86px); max-width: min(760px, calc(100vw - 56px)); opacity: 0; transform: translateY(16px); transition: opacity 900ms ease, transform 900ms ease; pointer-events: none; text-shadow: 0 4px 24px rgba(255, 24, 24, .46), 0 3px 18px rgba(0,0,0,.92); }
+      #title-card.visible { opacity: 1; transform: translateY(0); }
+      #scene-kicker { margin: 0 0 10px; color: #ffb0a2; font: 700 clamp(12px, 1.15vw, 17px)/1.45 system-ui, sans-serif; letter-spacing: 0; }
+      #scene-title { margin: 0; color: #fff4ed; font: 800 clamp(30px, 4.5vw, 72px)/1.12 "Yu Gothic", "Hiragino Kaku Gothic ProN", Meiryo, system-ui, sans-serif; letter-spacing: 0; }
+      #status { position: fixed; right: 18px; top: 16px; max-width: min(380px, calc(100vw - 36px)); padding: 8px 10px; border: 1px solid rgba(255, 66, 44, .45); background: rgba(4, 4, 6, .72); color: #fff1ec; font: 12px/1.5 system-ui, sans-serif; pointer-events: none; box-shadow: 0 0 18px rgba(255, 24, 24, .12); }
+      body.ready #status { opacity: .45; }
+    </style>
+  </head>
+  <body>
+    <main id="map"></main>
+    <div id="vignette"></div>
+    <section id="title-card" aria-live="polite">
+      <p id="scene-kicker">Route 128</p>
+      <h1 id="scene-title">赤い痕跡</h1>
+    </section>
+    <div id="status">Mapbox token required</div>
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.11.0/mapbox-gl.js"></script>
+    <script>
+      (async function boot() {
+        const config = await loadRemoteConfig();
+        const token = (window.MAPBOX_TOKEN || config.mapboxToken || new URLSearchParams(location.search).get('token') || '').trim();
+        const titleCard = document.getElementById('title-card');
+        const sceneTitle = document.getElementById('scene-title');
+        const status = document.getElementById('status');
+        const state = { storyline: null, sceneIndex: -1, activeOverlayId: null, activeOverlayOpacity: 0, autoplayTimer: null, energyFrame: null };
+
+        if (!token) status.textContent = 'Set MAPBOX_TOKEN in Vercel';
+        mapboxgl.accessToken = token;
+
+        const map = new mapboxgl.Map({
+          container: 'map',
+          style: 'mapbox://styles/mapbox/dark-v11',
+          center: [140.34, 35.33],
+          zoom: 10.8,
+          pitch: 58,
+          bearing: 18,
+          antialias: true,
+          attributionControl: false,
+          logoPosition: 'bottom-left'
+        });
+
+        map.dragRotate.disable();
+        map.touchZoomRotate.disableRotation();
+
+        await once(map, 'load');
+        hideModernPoiLabels(map);
+        await addEnergyRoute(map);
+        state.storyline = await loadStoryline(config);
+        document.body.classList.add('ready');
+        status.textContent = 'Space: next scene / R: autoplay / L: old map opacity';
+        await waitForIdle(map);
+        goToScene(0);
+
+        window.addEventListener('keydown', (event) => {
+          if (event.code === 'Space') { event.preventDefault(); goToScene(state.sceneIndex + 1); }
+          if (event.key.toLowerCase() === 'r') { event.preventDefault(); startAutopilot(); }
+          if (event.key.toLowerCase() === 'l') { event.preventDefault(); toggleCurrentOverlay(); }
+        });
+
+        async function goToScene(nextIndex, options = {}) {
+          const scenes = state.storyline.scenes;
+          const index = ((nextIndex % scenes.length) + scenes.length) % scenes.length;
+          const scene = scenes[index];
+          state.sceneIndex = index;
+          sceneTitle.textContent = scene.title;
+          status.textContent = `${index + 1}/${scenes.length}: ${scene.title}`;
+          titleCard.classList.remove('visible');
+          fadeOutCurrentOverlay();
+          runEnergyPulse();
+
+          map.flyTo({
+            center: scene.lngLat,
+            zoom: scene.zoom,
+            pitch: Math.max(scene.pitch || 58, 58),
+            bearing: scene.bearing,
+            duration: options.instant ? 0 : scene.duration,
+            curve: 1.42,
+            speed: .55,
+            essential: true
+          });
+
+          await once(map, 'moveend');
+          await waitForIdle(map);
+          if (scene.overlayImage && scene.overlayCoords) await showImageOverlay(scene);
+          titleCard.classList.add('visible');
+        }
+
+        function startAutopilot() {
+          if (state.autoplayTimer) clearTimeout(state.autoplayTimer);
+          goToScene(0, { instant: state.sceneIndex === -1 });
+          let next = 1;
+          const schedule = () => {
+            const current = state.storyline.scenes[state.sceneIndex];
+            state.autoplayTimer = setTimeout(async () => {
+              await goToScene(next);
+              next = (next + 1) % state.storyline.scenes.length;
+              schedule();
+            }, Math.max(2800, current.duration + 1800));
+          };
+          schedule();
+        }
+
+        async function addEnergyRoute(targetMap) {
+          targetMap.addSource('route128', { type: 'geojson', data: './route128.geojson', lineMetrics: true });
+          targetMap.addLayer({ id: 'route128-glow-outer', type: 'line', source: 'route128', paint: { 'line-color': '#b50f16', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 13, 14, 26, 17, 42], 'line-blur': 16, 'line-opacity': .28 } });
+          targetMap.addLayer({ id: 'route128-glow-inner', type: 'line', source: 'route128', paint: { 'line-color': '#ff2b20', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 5, 14, 13, 17, 22], 'line-blur': 7, 'line-opacity': .62 } });
+          targetMap.addLayer({ id: 'route128-core', type: 'line', source: 'route128', paint: { 'line-color': '#ffd2be', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 1.4, 14, 4.2, 17, 7], 'line-blur': .7, 'line-opacity': .92 } });
+          targetMap.addLayer({ id: 'route128-scan', type: 'line', source: 'route128', paint: { 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 7, 14, 16, 17, 28], 'line-blur': 5, 'line-opacity': .95, 'line-gradient': ['rgba', 255, 32, 24, 0] } });
+        }
+
+        function runEnergyPulse() {
+          if (state.energyFrame) cancelAnimationFrame(state.energyFrame);
+          const started = performance.now();
+          const step = (now) => {
+            const t = ((now - started) / 6200) % 1;
+            const head = t;
+            const tail = Math.max(0, t - .15);
+            const halo = .52 + Math.pow(Math.sin((now - started) / 1000 * 5.4), 8) * .35;
+            if (map.getLayer('route128-glow-inner')) {
+              map.setPaintProperty('route128-glow-inner', 'line-opacity', halo);
+              map.setPaintProperty('route128-scan', 'line-gradient', [
+                'interpolate', ['linear'], ['line-progress'],
+                0, 'rgba(255, 20, 18, 0)',
+                tail, 'rgba(255, 25, 18, 0)',
+                Math.max(tail, head - .045), 'rgba(255, 45, 24, .55)',
+                head, 'rgba(255, 238, 205, 1)',
+                Math.min(1, head + .035), 'rgba(255, 38, 22, .2)',
+                1, 'rgba(255, 20, 18, 0)'
+              ]);
+            }
+            state.energyFrame = requestAnimationFrame(step);
+          };
+          state.energyFrame = requestAnimationFrame(step);
+        }
+
+        async function showImageOverlay(scene) {
+          const sourceId = `old-map-${scene.id}`;
+          const layerId = `${sourceId}-layer`;
+          if (!map.getSource(sourceId)) {
+            map.addSource(sourceId, { type: 'image', url: scene.overlayImage, coordinates: scene.overlayCoords });
+            map.addLayer({ id: layerId, type: 'raster', source: sourceId, paint: { 'raster-opacity': 0, 'raster-fade-duration': 0 } }, 'route128-glow-outer');
+          }
+          state.activeOverlayId = layerId;
+          state.activeOverlayOpacity = 1;
+          await fadeLayer(layerId, 'raster-opacity', 0, .72, 1300);
+        }
+
+        function fadeOutCurrentOverlay() {
+          if (!state.activeOverlayId || !map.getLayer(state.activeOverlayId)) return;
+          const layerId = state.activeOverlayId;
+          fadeLayer(layerId, 'raster-opacity', currentOpacity(layerId), 0, 800);
+          state.activeOverlayId = null;
+          state.activeOverlayOpacity = 0;
+        }
+
+        function toggleCurrentOverlay() {
+          if (!state.activeOverlayId || !map.getLayer(state.activeOverlayId)) return;
+          const next = state.activeOverlayOpacity > 0 ? 0 : .72;
+          fadeLayer(state.activeOverlayId, 'raster-opacity', currentOpacity(state.activeOverlayId), next, 520);
+          state.activeOverlayOpacity = next;
+        }
+
+        function hideModernPoiLabels(targetMap) {
+          const hidden = [/poi-label/, /transit-label/, /airport-label/, /settlement-subdivision-label/, /building-number-label/];
+          for (const layer of targetMap.getStyle().layers || []) {
+            if (layer.type === 'symbol' && hidden.some((pattern) => pattern.test(layer.id))) targetMap.setLayoutProperty(layer.id, 'visibility', 'none');
+          }
+        }
+
+        function currentOpacity(layerId) {
+          const value = map.getPaintProperty(layerId, 'raster-opacity');
+          return typeof value === 'number' ? value : 0;
+        }
+
+        function fadeLayer(layerId, property, from, to, duration) {
+          return new Promise((resolve) => {
+            const started = performance.now();
+            const step = (now) => {
+              if (!map.getLayer(layerId)) { resolve(); return; }
+              const p = clamp((now - started) / duration, 0, 1);
+              const eased = p < .5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+              map.setPaintProperty(layerId, property, from + (to - from) * eased);
+              if (p < 1) requestAnimationFrame(step); else resolve();
+            };
+            requestAnimationFrame(step);
+          });
+        }
+
+        async function loadRemoteConfig() {
+          try { const response = await fetch('/api/config', { cache: 'no-store' }); return response.ok ? response.json() : {}; }
+          catch (error) { return {}; }
+        }
+
+        async function loadStoryline(config) {
+          if (config.supabaseUrl && config.supabaseAnonKey) {
+            try {
+              const endpoint = `${config.supabaseUrl}/rest/v1/scenes?select=*&order=sort_order.asc`;
+              const response = await fetch(endpoint, { headers: { apikey: config.supabaseAnonKey, authorization: `Bearer ${config.supabaseAnonKey}` } });
+              const rows = response.ok ? await response.json() : [];
+              if (rows.length) return { scenes: rows.map((row) => ({ id: row.id, title: row.title, lngLat: row.lng_lat, zoom: row.zoom, pitch: row.pitch, bearing: row.bearing, duration: row.duration, overlayImage: row.overlay_image, overlayCoords: row.overlay_coords, highlightRouteId: row.highlight_route_id })) };
+            } catch (error) { console.warn(error); }
+          }
+          const fallback = await fetch('./storyline.json');
+          return fallback.json();
+        }
+
+        function waitForIdle(targetMap) { return targetMap.loaded() && targetMap.areTilesLoaded() ? Promise.resolve() : once(targetMap, 'idle'); }
+        function once(targetMap, eventName) { return new Promise((resolve) => targetMap.once(eventName, resolve)); }
+        function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
+      }());
+    </script>
+  </body>
+</html>
