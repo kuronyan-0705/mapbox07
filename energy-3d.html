@@ -80,8 +80,7 @@
 
         async function smoothOutro() {
           setReveal(1, .95);
-          const currentBearing = map.getBearing();
-          map.easeTo({ center: [140.08, 35.29], zoom: 8.9, pitch: 58, bearing: currentBearing + 145, duration: 6500, easing: easeInOutCubic, essential: true });
+          map.easeTo({ center: [140.08, 35.29], zoom: 8.9, pitch: 58, bearing: 0, duration: 6500, easing: easeInOutCubic, essential: true });
           await once(map, 'moveend');
         }
 
@@ -159,9 +158,9 @@
               const progress = clamp((now - started) / duration, 0, 1);
               const eased = easeInOutSine(progress);
               const point = pointAt(path, eased);
-              const lookAhead = pointAt(path, Math.min(1, eased + .055));
+              const lookAhead = pointAt(path, Math.min(1, eased + .045));
               const targetBearing = bearingBetween(point.coord, lookAhead.coord);
-              state.smoothedBearing = smoothBearing(state.smoothedBearing, targetBearing, .05);
+              state.smoothedBearing = smoothBearing(state.smoothedBearing, targetBearing, .085);
               const pulse = .72 + Math.pow(Math.sin((now - started) / 1000 * 6.2), 8) * .28;
               setReveal(eased, pulse);
               const zoom = 13.05 + Math.sin(Math.PI * eased) * .72;
@@ -187,11 +186,7 @@
           state.energyFrame = requestAnimationFrame(step);
         }
 
-        function stopEnergyPulse() {
-          if (state.energyFrame) cancelAnimationFrame(state.energyFrame);
-          state.energyFrame = null;
-        }
-
+        function stopEnergyPulse() { if (state.energyFrame) cancelAnimationFrame(state.energyFrame); state.energyFrame = null; }
         function setReveal(progress, pulse) {
           const p = clamp(progress, 0, 1);
           const bodyEnd = Math.max(0, p - .02);
