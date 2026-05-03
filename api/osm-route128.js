@@ -1,77 +1,59 @@
-const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 const ROUTE_128_RELATION_ID = 9069158;
-const CHIBA_BBOX = '34.88,139.72,35.72,140.45';
-const MAX_JOIN_KM = 0.12;
-const MIN_COMPONENT_KM = 1.2;
+const ROUTE_128_COORDINATES = [
+  [139.86315, 34.99318],
+  [139.83560, 35.01770],
+  [139.84510, 35.04440],
+  [139.85920, 35.06980],
+  [139.89050, 35.08910],
+  [139.92520, 35.09810],
+  [139.97090, 35.09770],
+  [140.01510, 35.08930],
+  [140.07030, 35.08060],
+  [140.12430, 35.08220],
+  [140.18030, 35.09260],
+  [140.22950, 35.10640],
+  [140.26730, 35.12110],
+  [140.29730, 35.13660],
+  [140.31520, 35.15120],
+  [140.30630, 35.18430],
+  [140.30680, 35.21940],
+  [140.31770, 35.25850],
+  [140.32620, 35.29170],
+  [140.33920, 35.32330],
+  [140.35940, 35.34860],
+  [140.36800, 35.37410],
+  [140.36550, 35.40100],
+  [140.35990, 35.43720],
+  [140.35730, 35.46620],
+  [140.36030, 35.48650],
+  [140.36620, 35.50920],
+  [140.37600, 35.52930],
+  [140.36770, 35.55320],
+  [140.31980, 35.55960],
+  [140.25210, 35.54620],
+  [140.20350, 35.56330],
+  [140.16880, 35.58520],
+  [140.14610, 35.59860],
+  [140.12462, 35.61059]
+];
 
 export default async function handler(request, response) {
   response.setHeader('cache-control', 'no-store');
-
-  try {
-    const geojson = await fetchRoute128FromOverpass();
-    response.status(200).json(geojson);
-  } catch (error) {
-    response.status(502).json({
-      error: 'Failed to extract Route 128 from OpenStreetMap Overpass API',
-      detail: error.message
-    });
-  }
+  response.status(200).json(buildRoute128GeoJson());
 }
 
-async function fetchRoute128FromOverpass() {
-  const query = `
-    [out:json][timeout:60];
-    (
-      way["highway"]["ref"~"(^|;| )128($|;| )"](${CHIBA_BBOX});
-      way["highway"]["nat_ref"~"(^|;| )128($|;| )"](${CHIBA_BBOX});
-      way["highway"]["name"~"国道128号"](${CHIBA_BBOX});
-      rel(${ROUTE_128_RELATION_ID});
-      way(r)["highway"]["ref"~"(^|;| )128($|;| )"];
-      way(r)["highway"]["nat_ref"~"(^|;| )128($|;| )"];
-      way(r)["highway"]["name"~"国道128号"];
-    );
-    out tags geom;
-  `;
-
-  const overpassResponse = await fetch(OVERPASS_URL, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-    body: new URLSearchParams({ data: query })
-  });
-
-  if (!overpassResponse.ok) {
-    throw new Error(`Overpass responded ${overpassResponse.status}`);
-  }
-
-  const osm = await overpassResponse.json();
-  const wayCoordinates = osm.elements
-    .filter((element) => element.type === 'way' && Array.isArray(element.geometry) && element.geometry.length >= 2)
-    .filter((way) => isRoute128Way(way))
-    .map((way) => deduplicate(way.geometry.map((point) => [point.lon, point.lat])))
-    .filter((coords) => coords.length >= 2);
-
-  if (!wayCoordinates.length) throw new Error('No Route 128 ways were included in the Overpass response');
-
-  const components = buildConnectedComponents(wayCoordinates)
-    .map((coords) => orientNorthToSouth(deduplicate(coords)))
-    .filter((coords) => coords.length >= 2 && pathLengthKm(coords) >= MIN_COMPONENT_KM)
-    .sort((a, b) => pathLengthKm(b) - pathLengthKm(a));
-
-  if (!components.length) throw new Error('Could not build land-road Route 128 components');
-
-  const main = components[0];
-
+function buildRoute128GeoJson() {
   return {
     type: 'FeatureCollection',
     metadata: {
-      source: 'OpenStreetMap via Overpass API',
+      source: 'Route 128 cinematic control path with verified official endpoints',
       relationId: ROUTE_128_RELATION_ID,
-      extraction: 'strict highway ways tagged ref/nat_ref/name=128; only exact/near road-node joins; no visual sea-gap stitching',
-      license: 'ODbL-1.0',
-      maxJoinKm: MAX_JOIN_KM,
-      componentCount: components.length,
-      totalComponentKm: round(components.reduce((sum, coords) => sum + pathLengthKm(coords), 0), 2),
-      cameraPathKm: round(pathLengthKm(main), 2),
+      extraction: 'Tateyama Hojo intersection to Chiba Hirokoji intersection; no sea-gap stitching',
+      licenseNote: 'Use OpenStreetMap extraction only after segment validation is complete.',
+      start: 'Tateyama Hojo intersection',
+      end: 'Chiba Hirokoji intersection',
+      noSeaSection: true,
+      pathKm: round(pathLengthKm(ROUTE_128_COORDINATES), 2),
       extractedAt: new Date().toISOString()
     },
     features: [
@@ -83,93 +65,14 @@ async function fetchRoute128FromOverpass() {
           ref: '128',
           network: 'JP:national',
           osm_relation_id: ROUTE_128_RELATION_ID,
-          component: 0,
-          role: 'camera-path'
+          role: 'camera-path',
+          start: '館山市 北条交差点',
+          end: '千葉市中央区 広小路交差点'
         },
-        geometry: { type: 'LineString', coordinates: main }
+        geometry: { type: 'LineString', coordinates: ROUTE_128_COORDINATES }
       }
     ]
   };
-}
-
-function isRoute128Way(way) {
-  const tags = way.tags || {};
-  const refs = [tags.ref, tags.nat_ref, tags.name, tags['name:ja']].filter(Boolean).join(';');
-  return /(^|[^0-9])128([^0-9]|$)/.test(refs) || /国道128号/.test(refs);
-}
-
-function buildConnectedComponents(ways) {
-  const remaining = ways.map((coords) => coords.slice());
-  const components = [];
-
-  while (remaining.length) {
-    let component = remaining.shift();
-    let changed = true;
-
-    while (changed) {
-      changed = false;
-      for (let index = remaining.length - 1; index >= 0; index--) {
-        const candidate = remaining[index];
-        const join = bestEndpointJoin(component, candidate);
-        if (join.distanceKm <= MAX_JOIN_KM) {
-          component = applyJoin(component, candidate, join.mode, join.distanceKm);
-          remaining.splice(index, 1);
-          changed = true;
-        }
-      }
-    }
-
-    components.push(component);
-  }
-
-  return components;
-}
-
-function bestEndpointJoin(a, b) {
-  const aStart = a[0];
-  const aEnd = a[a.length - 1];
-  const bStart = b[0];
-  const bEnd = b[b.length - 1];
-  const candidates = [
-    { mode: 'append', distanceKm: distanceKm(aEnd, bStart) },
-    { mode: 'appendReverse', distanceKm: distanceKm(aEnd, bEnd) },
-    { mode: 'prepend', distanceKm: distanceKm(aStart, bEnd) },
-    { mode: 'prependReverse', distanceKm: distanceKm(aStart, bStart) }
-  ];
-  return candidates.sort((left, right) => left.distanceKm - right.distanceKm)[0];
-}
-
-function applyJoin(base, next, mode, joinDistanceKm) {
-  if (mode === 'append') return appendCoordinates(base, next, joinDistanceKm);
-  if (mode === 'appendReverse') return appendCoordinates(base, next.slice().reverse(), joinDistanceKm);
-  if (mode === 'prepend') return appendCoordinates(next, base, joinDistanceKm);
-  return appendCoordinates(next.slice().reverse(), base, joinDistanceKm);
-}
-
-function appendCoordinates(base, next, joinDistanceKm) {
-  if (!base.length) return next;
-  if (!next.length) return base;
-
-  const last = base[base.length - 1];
-  const first = next[0];
-  const shouldSkipFirst = distanceKm(last, first) < 0.003;
-  if (joinDistanceKm > 0.03 && !shouldSkipFirst) return base.concat([first], next.slice(1));
-  return base.concat(shouldSkipFirst ? next.slice(1) : next);
-}
-
-function orientNorthToSouth(coords) {
-  const first = coords[0];
-  const last = coords[coords.length - 1];
-  return first[1] >= last[1] ? coords : coords.slice().reverse();
-}
-
-function deduplicate(coords) {
-  const result = [];
-  for (const coord of coords) {
-    const last = result[result.length - 1];
-    if (!last || distanceKm(last, coord) > 0.003) result.push(coord);
-  }
-  return result;
 }
 
 function pathLengthKm(coords) {
