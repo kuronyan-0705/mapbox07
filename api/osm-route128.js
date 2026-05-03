@@ -1,4 +1,8 @@
-const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+const OVERPASS_URLS = [
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.openstreetmap.ru/api/interpreter'
+];
 const ROUTE_128_RELATION_ID = 9069158;
 const CHIBA_START = [140.12462, 35.61059];
 const TATEYAMA_END = [139.86315, 34.99318];
@@ -21,22 +25,46 @@ export default async function handler(request, response) {
 
 async function fetchOrderedRelationRoute128() {
   const query = `
-    [out:json][timeout:60];
-    rel(${ROUTE_128_RELATION_ID});
-    out body;
-    way(r);
+    [out:json][timeout:90];
+    rel(${ROUTE_128_RELATION_ID})->.route;
+    .route out body;
+    way(r.route);
     out tags geom;
   `;
+  const errors = [];
 
-  const overpassResponse = await fetch(OVERPASS_URL, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-    body: new URLSearchParams({ data: query })
-  });
+  for (const url of OVERPASS_URLS) {
+    try {
+      const osm = await fetchOverpassJson(url, query);
+      return buildRouteFromOsm(osm, url);
+    } catch (error) {
+      errors.push(`${url}: ${error.message}`);
+    }
+  }
 
-  if (!overpassResponse.ok) throw new Error(`Overpass responded ${overpassResponse.status}`);
+  throw new Error(errors.join(' | '));
+}
 
-  const osm = await overpassResponse.json();
+async function fetchOverpassJson(url, query) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25000);
+
+  try {
+    const overpassResponse = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+      body: new URLSearchParams({ data: query }),
+      signal: controller.signal
+    });
+
+    if (!overpassResponse.ok) throw new Error(`HTTP ${overpassResponse.status}`);
+    return await overpassResponse.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function buildRouteFromOsm(osm, overpassUrl) {
   const relation = osm.elements.find((element) => element.type === 'relation' && element.id === ROUTE_128_RELATION_ID);
   if (!relation || !Array.isArray(relation.members)) throw new Error(`OSM relation ${ROUTE_128_RELATION_ID} was not returned`);
 
@@ -75,7 +103,8 @@ async function fetchOrderedRelationRoute128() {
   return {
     type: 'FeatureCollection',
     metadata: {
-      source: 'OpenStreetMap Overpass API ordered relation members',
+      source: 'OpenStreetMap Overpass ordered relation members',
+      overpassUrl,
       relationId: ROUTE_128_RELATION_ID,
       relationName: relation.tags?.name || '国道128号',
       extraction: 'Relation member way order, exact OSM way geometry, no hand drawn coordinates, no long gap stitching',
