@@ -6,15 +6,15 @@
     <title>Route 128 3D Energy Director</title>
     <link href="https://api.mapbox.com/mapbox-gl-js/v3.11.0/mapbox-gl.css" rel="stylesheet">
     <style>
-      html, body, #map { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #000; }
+      html, body, #map { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #020304; }
       .mapboxgl-ctrl-logo, .mapboxgl-ctrl-attrib, .mapboxgl-ctrl-bottom-left, .mapboxgl-ctrl-bottom-right { display: none !important; }
-      #black-grade { position: fixed; inset: 0; pointer-events: none; background: linear-gradient(rgba(0,0,0,.38), rgba(0,0,0,.48)); mix-blend-mode: multiply; }
-      #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at 50% 45%, rgba(0,0,0,0) 0, rgba(0,0,0,.22) 38%, rgba(0,0,0,.86) 100%); }
+      #black-grade { position: fixed; inset: 0; pointer-events: none; background: linear-gradient(rgba(0,0,0,.14), rgba(0,0,0,.22)); mix-blend-mode: multiply; }
+      #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at 50% 45%, rgba(0,0,0,0) 0, rgba(0,0,0,.14) 42%, rgba(0,0,0,.68) 100%); }
       #title-card { position: fixed; left: clamp(28px, 5vw, 72px); bottom: clamp(28px, 7vh, 86px); max-width: min(780px, calc(100vw - 56px)); opacity: 0; transform: translateY(16px); transition: opacity 900ms ease, transform 900ms ease; pointer-events: none; text-shadow: 0 4px 26px rgba(255, 28, 20, .5), 0 3px 20px rgba(0,0,0,.95); }
       #title-card.visible { opacity: 1; transform: translateY(0); }
       #scene-kicker { margin: 0 0 10px; color: #ff9b88; font: 700 clamp(12px, 1.15vw, 17px)/1.45 system-ui, sans-serif; letter-spacing: 0; }
       #scene-title { margin: 0; color: #fff1ec; font: 800 clamp(30px, 4.5vw, 72px)/1.12 "Yu Gothic", "Hiragino Kaku Gothic ProN", Meiryo, system-ui, sans-serif; letter-spacing: 0; }
-      #status { position: fixed; right: 18px; top: 16px; max-width: min(390px, calc(100vw - 36px)); padding: 8px 10px; border: 1px solid rgba(255, 66, 44, .32); background: rgba(0, 0, 0, .78); color: #ffe7df; font: 12px/1.5 system-ui, sans-serif; pointer-events: none; box-shadow: 0 0 18px rgba(255, 24, 24, .12); }
+      #status { position: fixed; right: 18px; top: 16px; max-width: min(390px, calc(100vw - 36px)); padding: 8px 10px; border: 1px solid rgba(255, 66, 44, .32); background: rgba(0, 0, 0, .72); color: #ffe7df; font: 12px/1.5 system-ui, sans-serif; pointer-events: none; box-shadow: 0 0 18px rgba(255, 24, 24, .12); }
       body.ready #status { opacity: .36; }
     </style>
   </head>
@@ -56,8 +56,8 @@
         map.touchZoomRotate.disableRotation();
 
         await once(map, 'load');
-        makeMapNearlyBlack(map);
-        add3DTerrain(map);
+        tuneMapForBlackCinema(map);
+        add3DTerrainAndRelief(map);
         add3DBuildings(map);
         hideModernPoiLabels(map);
         await addEnergyRoute(map);
@@ -98,40 +98,52 @@
           titleCard.classList.add('visible');
         }
 
-        function makeMapNearlyBlack(targetMap) {
+        function tuneMapForBlackCinema(targetMap) {
           const layers = targetMap.getStyle().layers || [];
           for (const layer of layers) {
-            if (layer.type === 'background') targetMap.setPaintProperty(layer.id, 'background-color', '#000000');
+            if (layer.type === 'background') targetMap.setPaintProperty(layer.id, 'background-color', '#030405');
             if (layer.type === 'fill') {
-              targetMap.setPaintProperty(layer.id, 'fill-color', '#050607');
-              targetMap.setPaintProperty(layer.id, 'fill-opacity', .58);
+              targetMap.setPaintProperty(layer.id, 'fill-color', '#101315');
+              targetMap.setPaintProperty(layer.id, 'fill-opacity', .82);
             }
             if (layer.type === 'line') {
-              targetMap.setPaintProperty(layer.id, 'line-color', '#151719');
-              targetMap.setPaintProperty(layer.id, 'line-opacity', .2);
+              targetMap.setPaintProperty(layer.id, 'line-color', '#252a2d');
+              targetMap.setPaintProperty(layer.id, 'line-opacity', .34);
             }
             if (layer.type === 'symbol') {
-              targetMap.setPaintProperty(layer.id, 'text-color', '#2c3033');
-              targetMap.setPaintProperty(layer.id, 'text-halo-color', '#000000');
-              targetMap.setPaintProperty(layer.id, 'text-halo-width', .35);
-              targetMap.setPaintProperty(layer.id, 'text-opacity', .34);
-              targetMap.setPaintProperty(layer.id, 'icon-opacity', .16);
+              targetMap.setPaintProperty(layer.id, 'text-color', '#555b60');
+              targetMap.setPaintProperty(layer.id, 'text-halo-color', '#050607');
+              targetMap.setPaintProperty(layer.id, 'text-halo-width', .55);
+              targetMap.setPaintProperty(layer.id, 'text-opacity', .46);
+              targetMap.setPaintProperty(layer.id, 'icon-opacity', .22);
             }
           }
         }
 
-        function add3DTerrain(targetMap) {
+        function add3DTerrainAndRelief(targetMap) {
           targetMap.addSource('mapbox-dem', {
             type: 'raster-dem',
             url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
             tileSize: 512,
             maxzoom: 14
           });
-          targetMap.setTerrain({ source: 'mapbox-dem', exaggeration: 2.35 });
+          targetMap.setTerrain({ source: 'mapbox-dem', exaggeration: 2.15 });
+          targetMap.addLayer({
+            id: 'cinematic-hillshade',
+            type: 'hillshade',
+            source: 'mapbox-dem',
+            paint: {
+              'hillshade-shadow-color': '#000000',
+              'hillshade-highlight-color': '#30363a',
+              'hillshade-accent-color': '#15191c',
+              'hillshade-illumination-direction': 315,
+              'hillshade-exaggeration': .78
+            }
+          }, 'route128-shadow');
           targetMap.setFog({
-            color: 'rgb(0, 0, 0)',
-            'high-color': 'rgb(8, 8, 9)',
-            'horizon-blend': .025,
+            color: 'rgb(2, 3, 4)',
+            'high-color': 'rgb(16, 18, 20)',
+            'horizon-blend': .035,
             'space-color': 'rgb(0, 0, 0)',
             'star-intensity': 0
           });
@@ -147,10 +159,10 @@
             type: 'fill-extrusion',
             minzoom: 14,
             paint: {
-              'fill-extrusion-color': ['interpolate', ['linear'], ['zoom'], 14, '#050607', 17, '#090a0c'],
+              'fill-extrusion-color': ['interpolate', ['linear'], ['zoom'], 14, '#090b0d', 17, '#15191d'],
               'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'height']],
               'fill-extrusion-base': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'min_height']],
-              'fill-extrusion-opacity': .82,
+              'fill-extrusion-opacity': .74,
               'fill-extrusion-vertical-gradient': true
             }
           }, labelLayer && labelLayer.id);
@@ -158,7 +170,7 @@
 
         async function addEnergyRoute(targetMap) {
           targetMap.addSource('route128', { type: 'geojson', data: './route128.geojson', lineMetrics: true });
-          targetMap.addLayer({ id: 'route128-shadow', type: 'line', source: 'route128', paint: { 'line-color': '#120000', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 18, 14, 38, 17, 60], 'line-blur': 28, 'line-opacity': .7 } });
+          targetMap.addLayer({ id: 'route128-shadow', type: 'line', source: 'route128', paint: { 'line-color': '#120000', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 18, 14, 38, 17, 60], 'line-blur': 28, 'line-opacity': .62 } });
           targetMap.addLayer({ id: 'route128-glow-outer', type: 'line', source: 'route128', paint: { 'line-color': '#d40b12', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 12, 14, 28, 17, 48], 'line-blur': 18, 'line-opacity': .5 } });
           targetMap.addLayer({ id: 'route128-glow-inner', type: 'line', source: 'route128', paint: { 'line-color': '#ff2318', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 4, 14, 12, 17, 22], 'line-blur': 6, 'line-opacity': .78 } });
           targetMap.addLayer({ id: 'route128-core', type: 'line', source: 'route128', paint: { 'line-color': '#ffd8c6', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 1.2, 14, 3.6, 17, 6.4], 'line-blur': .55, 'line-opacity': .98 } });
