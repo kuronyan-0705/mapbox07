@@ -52,7 +52,7 @@
         await addEnergyRoute(map);
         state.storyline = await loadStoryline(config);
         document.body.classList.add('ready');
-        status.textContent = 'OSM Route 128 / R: replay / Space: next scene';
+        status.textContent = 'OSM ordered relation 9069158 / R: replay / Space: next scene';
         await waitForIdle(map);
         playRouteFilm();
 
@@ -144,24 +144,20 @@
             ['route128-hot-core', 5, 14, 24, 3, .98],
             ['route128-core', 2.3, 7, 12, .45, 1]
           ];
-          for (const [id, w8, w14, w17, blur, opacity] of layers) targetMap.addLayer({ id, type: 'line', source: 'route128', paint: { 'line-width': width(w8, w14, w17), 'line-blur': blur, 'line-opacity': opacity, 'line-gradient': transparentGradient() } });
-          targetMap.addLayer({ id: 'route128-scan-wide', type: 'line', source: 'route128', paint: { 'line-width': width(22, 54, 86), 'line-blur': 20, 'line-opacity': 1, 'line-gradient': transparentGradient() } });
-          targetMap.addLayer({ id: 'route128-scan', type: 'line', source: 'route128', paint: { 'line-width': width(10, 26, 42), 'line-blur': 5, 'line-opacity': 1, 'line-gradient': transparentGradient() } });
+          for (const [id, w8, w14, w17, blur, opacity] of layers) targetMap.addLayer({ id, type: 'line', source: 'route128', filter: ['==', ['get', 'role'], 'camera-path'], paint: { 'line-width': width(w8, w14, w17), 'line-blur': blur, 'line-opacity': opacity, 'line-gradient': transparentGradient() } });
+          targetMap.addLayer({ id: 'route128-scan-wide', type: 'line', source: 'route128', filter: ['==', ['get', 'role'], 'camera-path'], paint: { 'line-width': width(22, 54, 86), 'line-blur': 20, 'line-opacity': 1, 'line-gradient': transparentGradient() } });
+          targetMap.addLayer({ id: 'route128-scan', type: 'line', source: 'route128', filter: ['==', ['get', 'role'], 'camera-path'], paint: { 'line-width': width(10, 26, 42), 'line-blur': 5, 'line-opacity': 1, 'line-gradient': transparentGradient() } });
         }
 
         async function loadRoute128() {
-          try {
-            const response = await fetch('/api/osm-route128', { cache: 'no-store' });
-            if (!response.ok) throw new Error(`OSM route API failed: ${response.status}`);
-            const route = await response.json();
-            if (!route.features || !route.features[0]?.geometry?.coordinates?.length) throw new Error('OSM route API returned no coordinates');
-            status.textContent = 'OSM relation 9069158 loaded';
-            return route;
-          } catch (error) {
-            console.warn(error);
-            status.textContent = 'OSM route fallback: local GeoJSON';
-            return fetch('./route128.geojson', { cache: 'no-store' }).then((response) => response.json());
-          }
+          const response = await fetch('/api/osm-route128', { cache: 'no-store' });
+          if (!response.ok) throw new Error(`OSM relation route API failed: ${response.status}`);
+          const route = await response.json();
+          const cameraFeature = route.features?.find((feature) => feature.properties?.role === 'camera-path');
+          if (!cameraFeature?.geometry?.coordinates?.length) throw new Error('OSM relation API returned no camera-path coordinates');
+          route.features = [cameraFeature];
+          status.textContent = `OSM ordered relation loaded: ${route.metadata?.cameraPathKm || '?'} km`;
+          return route;
         }
 
         async function followRouteCamera(duration) {
