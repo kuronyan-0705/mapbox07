@@ -6,15 +6,15 @@
     <title>Route 128 3D Energy Director</title>
     <link href="https://api.mapbox.com/mapbox-gl-js/v3.11.0/mapbox-gl.css" rel="stylesheet">
     <style>
-      html, body, #map { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #171b1f; }
+      html, body, #map { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #182026; }
       .mapboxgl-ctrl-logo, .mapboxgl-ctrl-attrib, .mapboxgl-ctrl-bottom-left, .mapboxgl-ctrl-bottom-right { display: none !important; }
-      #black-grade { position: fixed; inset: 0; pointer-events: none; background: linear-gradient(rgba(0,0,0,.01), rgba(0,0,0,.03)); mix-blend-mode: multiply; }
-      #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at 50% 45%, rgba(0,0,0,0) 0, rgba(0,0,0,.03) 52%, rgba(0,0,0,.28) 100%); }
+      #black-grade { position: fixed; inset: 0; pointer-events: none; background: linear-gradient(rgba(0,0,0,.02), rgba(0,0,0,.05)); mix-blend-mode: multiply; }
+      #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at 50% 45%, rgba(0,0,0,0) 0, rgba(0,0,0,.02) 54%, rgba(0,0,0,.24) 100%); }
       #title-card { position: fixed; left: clamp(28px, 5vw, 72px); bottom: clamp(28px, 7vh, 86px); max-width: min(780px, calc(100vw - 56px)); opacity: 0; transform: translateY(16px); transition: opacity 900ms ease, transform 900ms ease; pointer-events: none; text-shadow: 0 4px 30px rgba(255, 28, 20, .72), 0 3px 20px rgba(0,0,0,.95); }
       #title-card.visible { opacity: 1; transform: translateY(0); }
       #scene-kicker { margin: 0 0 10px; color: #ff9b88; font: 700 clamp(12px, 1.15vw, 17px)/1.45 system-ui, sans-serif; letter-spacing: 0; }
       #scene-title { margin: 0; color: #fff1ec; font: 800 clamp(30px, 4.5vw, 72px)/1.12 "Yu Gothic", "Hiragino Kaku Gothic ProN", Meiryo, system-ui, sans-serif; letter-spacing: 0; }
-      #status { position: fixed; right: 18px; top: 16px; max-width: min(390px, calc(100vw - 36px)); padding: 8px 10px; border: 1px solid rgba(255, 66, 44, .34); background: rgba(0, 0, 0, .5); color: #ffe7df; font: 12px/1.5 system-ui, sans-serif; pointer-events: none; box-shadow: 0 0 22px rgba(255, 24, 24, .18); }
+      #status { position: fixed; right: 18px; top: 16px; max-width: min(390px, calc(100vw - 36px)); padding: 8px 10px; border: 1px solid rgba(255, 66, 44, .34); background: rgba(0, 0, 0, .42); color: #ffe7df; font: 12px/1.5 system-ui, sans-serif; pointer-events: none; box-shadow: 0 0 22px rgba(255, 24, 24, .18); }
       body.ready #status { opacity: .36; }
     </style>
   </head>
@@ -35,7 +35,7 @@
         const titleCard = document.getElementById('title-card');
         const sceneTitle = document.getElementById('scene-title');
         const status = document.getElementById('status');
-        const state = { storyline: null, sceneIndex: -1, autoplayTimer: null, energyFrame: null, revealStart: 0 };
+        const state = { storyline: null, sceneIndex: -1, autoplayTimer: null, energyFrame: null, revealStart: 0, revealDuration: 12000, routeCoords: [] };
 
         if (!token) status.textContent = 'Set MAPBOX_TOKEN in Vercel';
         mapboxgl.accessToken = token;
@@ -44,9 +44,9 @@
           container: 'map',
           style: 'mapbox://styles/mapbox/dark-v11',
           center: [140.22, 35.31],
-          zoom: 8.65,
+          zoom: 8.55,
           pitch: 0,
-          bearing: 0,
+          bearing: -35,
           antialias: true,
           attributionControl: false,
           logoPosition: 'bottom-left'
@@ -57,30 +57,38 @@
 
         await once(map, 'load');
         tuneMapForReadableTerrain(map);
+        addColorZones(map);
         add3DTerrainAndRelief(map);
         add3DBuildings(map);
         hideModernPoiLabels(map);
         await addEnergyRoute(map);
         state.storyline = await loadStoryline(config);
         document.body.classList.add('ready');
-        status.textContent = 'Intro: flat map to 3D / Space: next scene / R: autoplay';
+        status.textContent = 'Cinematic route run / R: replay / Space: next scene';
         await waitForIdle(map);
-        playIntro();
+        playRouteFilm();
 
         window.addEventListener('keydown', (event) => {
           if (event.code === 'Space') { event.preventDefault(); goToScene(state.sceneIndex + 1); }
-          if (event.key.toLowerCase() === 'r') { event.preventDefault(); startAutopilot(); }
+          if (event.key.toLowerCase() === 'r') { event.preventDefault(); playRouteFilm(); }
         });
 
-        async function playIntro() {
-          const first = state.storyline.scenes[0];
+        async function playRouteFilm() {
+          titleCard.classList.remove('visible');
+          const start = state.routeCoords[0] || [140.12462, 35.61059];
+          const end = state.routeCoords[state.routeCoords.length - 1] || [139.86315, 34.99318];
           state.sceneIndex = 0;
-          sceneTitle.textContent = first.title;
-          map.jumpTo({ center: [140.18, 35.30], zoom: 8.75, pitch: 0, bearing: 0 });
-          resetReveal();
+          sceneTitle.textContent = '国道128号線：地形を走る赤い痕跡';
+          map.jumpTo({ center: [140.19, 35.30], zoom: 8.45, pitch: 0, bearing: -70 });
+          setReveal(0, 0);
+          await wait(850);
+          map.easeTo({ center: start, zoom: 12.25, pitch: 74, bearing: 250, duration: 6200, easing: easeInOutCubic, essential: true });
+          await once(map, 'moveend');
+          resetReveal(12800);
           runEnergyPulse();
-          await wait(900);
-          map.easeTo({ center: first.lngLat, zoom: 12.45, pitch: 73, bearing: 32, duration: 9000, easing: easeInOutCubic, essential: true });
+          await followRouteCamera(12800);
+          await wait(350);
+          map.easeTo({ center: [140.08, 35.29], zoom: 8.9, pitch: 58, bearing: 26, duration: 6200, easing: easeInOutCubic, essential: true });
           await once(map, 'moveend');
           titleCard.classList.add('visible');
         }
@@ -93,20 +101,10 @@
           sceneTitle.textContent = scene.title;
           status.textContent = `${index + 1}/${scenes.length}: ${scene.title}`;
           titleCard.classList.remove('visible');
-          resetReveal();
+          resetReveal(scene.duration || 9000);
           runEnergyPulse();
 
-          map.flyTo({
-            center: scene.lngLat,
-            zoom: Math.max(scene.zoom, 12.4),
-            pitch: Math.max(scene.pitch || 73, 73),
-            bearing: scene.bearing + 14,
-            duration: options.instant ? 0 : scene.duration,
-            curve: 1.42,
-            speed: .48,
-            essential: true
-          });
-
+          map.flyTo({ center: scene.lngLat, zoom: Math.max(scene.zoom, 12.4), pitch: Math.max(scene.pitch || 73, 73), bearing: scene.bearing + 14, duration: options.instant ? 0 : scene.duration, curve: 1.42, speed: .48, essential: true });
           await once(map, 'moveend');
           await waitForIdle(map);
           titleCard.classList.add('visible');
@@ -115,71 +113,57 @@
         function tuneMapForReadableTerrain(targetMap) {
           const layers = targetMap.getStyle().layers || [];
           for (const layer of layers) {
-            if (layer.type === 'background') targetMap.setPaintProperty(layer.id, 'background-color', '#171b1f');
+            if (layer.type === 'background') targetMap.setPaintProperty(layer.id, 'background-color', '#182026');
             if (layer.type === 'fill') {
-              targetMap.setPaintProperty(layer.id, 'fill-color', '#3e464c');
-              targetMap.setPaintProperty(layer.id, 'fill-opacity', .98);
+              targetMap.setPaintProperty(layer.id, 'fill-color', '#4b5357');
+              targetMap.setPaintProperty(layer.id, 'fill-opacity', .88);
             }
             if (layer.type === 'line') {
-              targetMap.setPaintProperty(layer.id, 'line-color', '#6b747a');
-              targetMap.setPaintProperty(layer.id, 'line-opacity', .68);
+              targetMap.setPaintProperty(layer.id, 'line-color', '#7a8388');
+              targetMap.setPaintProperty(layer.id, 'line-opacity', .6);
             }
             if (layer.type === 'symbol') {
-              targetMap.setPaintProperty(layer.id, 'text-color', '#b4bdc4');
-              targetMap.setPaintProperty(layer.id, 'text-halo-color', '#1b2024');
+              targetMap.setPaintProperty(layer.id, 'text-color', '#c1c8cc');
+              targetMap.setPaintProperty(layer.id, 'text-halo-color', '#20282d');
               targetMap.setPaintProperty(layer.id, 'text-halo-width', .8);
-              targetMap.setPaintProperty(layer.id, 'text-opacity', .78);
-              targetMap.setPaintProperty(layer.id, 'icon-opacity', .42);
+              targetMap.setPaintProperty(layer.id, 'text-opacity', .72);
+              targetMap.setPaintProperty(layer.id, 'icon-opacity', .38);
             }
           }
         }
 
+        function addColorZones(targetMap) {
+          const firstSymbol = (targetMap.getStyle().layers || []).find((layer) => layer.type === 'symbol');
+          const before = firstSymbol && firstSymbol.id;
+          targetMap.addLayer({ id: 'cinematic-water-color', type: 'fill', source: 'composite', 'source-layer': 'water', paint: { 'fill-color': '#21485a', 'fill-opacity': .82 } }, before);
+          targetMap.addLayer({ id: 'cinematic-forest-color', type: 'fill', source: 'composite', 'source-layer': 'landuse', filter: ['in', ['get', 'class'], ['literal', ['wood', 'forest', 'park', 'grass']]], paint: { 'fill-color': '#31523d', 'fill-opacity': .58 } }, before);
+          targetMap.addLayer({ id: 'cinematic-plain-color', type: 'fill', source: 'composite', 'source-layer': 'landuse', filter: ['in', ['get', 'class'], ['literal', ['farmland', 'scrub', 'grassland']]], paint: { 'fill-color': '#5a5b43', 'fill-opacity': .5 } }, before);
+          targetMap.addLayer({ id: 'cinematic-city-color', type: 'fill', source: 'composite', 'source-layer': 'landuse', filter: ['in', ['get', 'class'], ['literal', ['residential', 'commercial', 'industrial', 'retail']]], paint: { 'fill-color': '#56505d', 'fill-opacity': .48 } }, before);
+        }
+
         function add3DTerrainAndRelief(targetMap) {
           targetMap.addSource('mapbox-dem', { type: 'raster-dem', url: 'mapbox://mapbox.mapbox-terrain-dem-v1', tileSize: 512, maxzoom: 14 });
-          targetMap.setTerrain({ source: 'mapbox-dem', exaggeration: 2.15 });
-          targetMap.addLayer({
-            id: 'cinematic-hillshade',
-            type: 'hillshade',
-            source: 'mapbox-dem',
-            paint: {
-              'hillshade-shadow-color': '#11161a',
-              'hillshade-highlight-color': '#b2bbc0',
-              'hillshade-accent-color': '#69737a',
-              'hillshade-illumination-direction': 315,
-              'hillshade-exaggeration': 1.08
-            }
-          });
-          targetMap.setFog({ color: 'rgb(22, 25, 28)', 'high-color': 'rgb(78, 84, 90)', 'horizon-blend': .07, 'space-color': 'rgb(4, 5, 7)', 'star-intensity': 0 });
+          targetMap.setTerrain({ source: 'mapbox-dem', exaggeration: 2.05 });
+          targetMap.addLayer({ id: 'cinematic-hillshade', type: 'hillshade', source: 'mapbox-dem', paint: { 'hillshade-shadow-color': '#11161a', 'hillshade-highlight-color': '#c0c8cc', 'hillshade-accent-color': '#758087', 'hillshade-illumination-direction': 315, 'hillshade-exaggeration': 1.0 } });
+          targetMap.setFog({ color: 'rgb(28, 32, 36)', 'high-color': 'rgb(86, 92, 98)', 'horizon-blend': .08, 'space-color': 'rgb(5, 7, 9)', 'star-intensity': 0 });
         }
 
         function add3DBuildings(targetMap) {
           const labelLayer = (targetMap.getStyle().layers || []).find((layer) => layer.type === 'symbol' && layer.layout && layer.layout['text-field']);
-          targetMap.addLayer({
-            id: '3d-buildings-cinematic',
-            source: 'composite',
-            'source-layer': 'building',
-            filter: ['==', ['get', 'extrude'], 'true'],
-            type: 'fill-extrusion',
-            minzoom: 14,
-            paint: {
-              'fill-extrusion-color': ['interpolate', ['linear'], ['zoom'], 14, '#2a3035', 17, '#46515a'],
-              'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'height']],
-              'fill-extrusion-base': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'min_height']],
-              'fill-extrusion-opacity': .78,
-              'fill-extrusion-vertical-gradient': true
-            }
-          }, labelLayer && labelLayer.id);
+          targetMap.addLayer({ id: '3d-buildings-cinematic', source: 'composite', 'source-layer': 'building', filter: ['==', ['get', 'extrude'], 'true'], type: 'fill-extrusion', minzoom: 14, paint: { 'fill-extrusion-color': ['interpolate', ['linear'], ['zoom'], 14, '#343b41', 17, '#5c6870'], 'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'height']], 'fill-extrusion-base': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'min_height']], 'fill-extrusion-opacity': .78, 'fill-extrusion-vertical-gradient': true } }, labelLayer && labelLayer.id);
         }
 
         async function addEnergyRoute(targetMap) {
-          targetMap.addSource('route128', { type: 'geojson', data: './route128.geojson', lineMetrics: true });
+          const route = await fetch('./route128.geojson', { cache: 'no-store' }).then((response) => response.json());
+          state.routeCoords = route.features[0].geometry.coordinates;
+          targetMap.addSource('route128', { type: 'geojson', data: route, lineMetrics: true });
           const width = (a, b, c) => ['interpolate', ['linear'], ['zoom'], 8, a, 14, b, 17, c];
           const layers = [
-            ['route128-terrain-reflection', 98, 185, 260, 48, .58],
-            ['route128-blood-haze', 42, 92, 142, 44, .86],
-            ['route128-shadow', 30, 68, 108, 34, .9],
-            ['route128-glow-outer', 20, 48, 78, 24, .96],
-            ['route128-glow-inner', 10, 28, 46, 11, .98],
+            ['route128-terrain-reflection', 110, 205, 285, 55, .6],
+            ['route128-blood-haze', 44, 96, 148, 44, .86],
+            ['route128-shadow', 31, 70, 110, 34, .9],
+            ['route128-glow-outer', 21, 50, 82, 24, .96],
+            ['route128-glow-inner', 10, 29, 48, 11, .98],
             ['route128-hot-core', 5, 14, 24, 3, .98],
             ['route128-core', 2.3, 7, 12, .45, 1]
           ];
@@ -190,8 +174,29 @@
           targetMap.addLayer({ id: 'route128-scan', type: 'line', source: 'route128', paint: { 'line-width': width(10, 26, 42), 'line-blur': 5, 'line-opacity': 1, 'line-gradient': transparentGradient() } });
         }
 
-        function resetReveal() {
+        async function followRouteCamera(duration) {
+          const path = buildPath(state.routeCoords);
+          const started = performance.now();
+          return new Promise((resolve) => {
+            const frame = (now) => {
+              const progress = clamp((now - started) / duration, 0, 1);
+              const eased = easeInOutSine(progress);
+              const point = pointAt(path, eased);
+              const lookAhead = pointAt(path, Math.min(1, eased + .018));
+              const bearing = bearingBetween(point.coord, lookAhead.coord);
+              const zoom = 12.75 + Math.sin(Math.PI * eased) * .55;
+              const pitch = 74 - Math.max(0, eased - .86) * 52;
+              map.jumpTo({ center: point.coord, zoom, pitch, bearing });
+              if (progress < 1) requestAnimationFrame(frame);
+              else resolve();
+            };
+            requestAnimationFrame(frame);
+          });
+        }
+
+        function resetReveal(duration) {
           state.revealStart = performance.now();
+          state.revealDuration = duration || 12000;
           setReveal(0, 0);
         }
 
@@ -199,7 +204,7 @@
           if (state.energyFrame) cancelAnimationFrame(state.energyFrame);
           const step = (now) => {
             const elapsed = now - state.revealStart;
-            const reveal = Math.min(1, elapsed / 7600);
+            const reveal = Math.min(1, elapsed / state.revealDuration);
             const pulse = .72 + Math.pow(Math.sin(elapsed / 1000 * 6.2), 8) * .28;
             setReveal(reveal, pulse);
             state.energyFrame = requestAnimationFrame(step);
@@ -219,101 +224,62 @@
           setGradient('route128-glow-inner', gradientFor('#ff2a16', .72 + pulse * .24, p, .08));
           setGradient('route128-hot-core', gradientFor('#ff6a38', .82 + pulse * .18, p, .05));
           setGradient('route128-core', gradientFor('#fff0dc', .92, p, .025));
-          setGradient('route128-scan-wide', [
-            'interpolate', ['linear'], ['line-progress'],
-            0, 'rgba(255, 12, 8, 0)',
-            Math.max(0, bodyEnd - .2), 'rgba(255, 12, 8, 0)',
-            headStart, 'rgba(255, 0, 0, .4)',
-            p, 'rgba(255, 240, 210, 1)',
-            headEnd, 'rgba(255, 30, 12, .18)',
-            1, 'rgba(255, 18, 12, 0)'
-          ]);
-          setGradient('route128-scan', [
-            'interpolate', ['linear'], ['line-progress'],
-            0, 'rgba(255, 18, 12, 0)',
-            Math.max(0, bodyEnd - .1), 'rgba(255, 20, 14, 0)',
-            headStart, 'rgba(255, 58, 26, .85)',
-            p, 'rgba(255, 255, 236, 1)',
-            headEnd, 'rgba(255, 46, 24, .34)',
-            1, 'rgba(255, 18, 12, 0)'
-          ]);
+          setGradient('route128-scan-wide', ['interpolate', ['linear'], ['line-progress'], 0, 'rgba(255, 12, 8, 0)', Math.max(0, bodyEnd - .2), 'rgba(255, 12, 8, 0)', headStart, 'rgba(255, 0, 0, .4)', p, 'rgba(255, 240, 210, 1)', headEnd, 'rgba(255, 30, 12, .18)', 1, 'rgba(255, 18, 12, 0)']);
+          setGradient('route128-scan', ['interpolate', ['linear'], ['line-progress'], 0, 'rgba(255, 18, 12, 0)', Math.max(0, bodyEnd - .1), 'rgba(255, 20, 14, 0)', headStart, 'rgba(255, 58, 26, .85)', p, 'rgba(255, 255, 236, 1)', headEnd, 'rgba(255, 46, 24, .34)', 1, 'rgba(255, 18, 12, 0)']);
         }
 
         function gradientFor(color, opacity, progress, softness) {
           const rgba = hexToRgba(color, opacity);
           const dim = hexToRgba(color, opacity * .45);
           const p = clamp(progress, 0, 1);
-          return [
-            'interpolate', ['linear'], ['line-progress'],
-            0, rgba,
-            Math.max(0, p - softness), dim,
-            p, rgba,
-            Math.min(1, p + .002), 'rgba(255, 0, 0, 0)',
-            1, 'rgba(255, 0, 0, 0)'
-          ];
+          return ['interpolate', ['linear'], ['line-progress'], 0, rgba, Math.max(0, p - softness), dim, p, rgba, Math.min(1, p + .002), 'rgba(255, 0, 0, 0)', 1, 'rgba(255, 0, 0, 0)'];
         }
 
-        function transparentGradient() {
-          return ['interpolate', ['linear'], ['line-progress'], 0, 'rgba(255,0,0,0)', 1, 'rgba(255,0,0,0)'];
-        }
-
-        function setGradient(layerId, gradient) {
-          if (map.getLayer(layerId)) map.setPaintProperty(layerId, 'line-gradient', gradient);
-        }
-
-        function hexToRgba(hex, alpha) {
-          const value = hex.replace('#', '');
-          const r = parseInt(value.slice(0, 2), 16);
-          const g = parseInt(value.slice(2, 4), 16);
-          const b = parseInt(value.slice(4, 6), 16);
-          return `rgba(${r}, ${g}, ${b}, ${clamp(alpha, 0, 1)})`;
-        }
-
-        function startAutopilot() {
-          if (state.autoplayTimer) clearTimeout(state.autoplayTimer);
-          goToScene(0, { instant: state.sceneIndex === -1 });
-          let next = 1;
-          const schedule = () => {
-            const current = state.storyline.scenes[state.sceneIndex];
-            state.autoplayTimer = setTimeout(async () => {
-              await goToScene(next);
-              next = (next + 1) % state.storyline.scenes.length;
-              schedule();
-            }, Math.max(2800, current.duration + 1800));
-          };
-          schedule();
-        }
-
-        function hideModernPoiLabels(targetMap) {
-          const hidden = [/poi-label/, /transit-label/, /airport-label/, /settlement-subdivision-label/, /building-number-label/];
-          for (const layer of targetMap.getStyle().layers || []) {
-            if (layer.type === 'symbol' && hidden.some((pattern) => pattern.test(layer.id))) targetMap.setLayoutProperty(layer.id, 'visibility', 'none');
+        function buildPath(coords) {
+          const segments = [];
+          let total = 0;
+          for (let i = 0; i < coords.length - 1; i++) {
+            const a = coords[i];
+            const b = coords[i + 1];
+            const length = distance(a, b);
+            segments.push({ a, b, start: total, end: total + length, length });
+            total += length;
           }
+          return { segments, total };
         }
 
-        async function loadRemoteConfig() {
-          try { const response = await fetch('/api/config', { cache: 'no-store' }); return response.ok ? response.json() : {}; }
-          catch (error) { return {}; }
+        function pointAt(path, progress) {
+          const target = path.total * clamp(progress, 0, 1);
+          const segment = path.segments.find((item) => target <= item.end) || path.segments[path.segments.length - 1];
+          const local = segment.length ? (target - segment.start) / segment.length : 0;
+          return { coord: [lerp(segment.a[0], segment.b[0], local), lerp(segment.a[1], segment.b[1], local)] };
         }
 
-        async function loadStoryline(config) {
-          if (config.supabaseUrl && config.supabaseAnonKey) {
-            try {
-              const endpoint = `${config.supabaseUrl}/rest/v1/scenes?select=*&order=sort_order.asc`;
-              const response = await fetch(endpoint, { headers: { apikey: config.supabaseAnonKey, authorization: `Bearer ${config.supabaseAnonKey}` } });
-              const rows = response.ok ? await response.json() : [];
-              if (rows.length) return { scenes: rows.map((row) => ({ id: row.id, title: row.title, lngLat: row.lng_lat, zoom: row.zoom, pitch: row.pitch, bearing: row.bearing, duration: row.duration, overlayImage: row.overlay_image, overlayCoords: row.overlay_coords, highlightRouteId: row.highlight_route_id })) };
-            } catch (error) { console.warn(error); }
-          }
-          const fallback = await fetch('./storyline.json');
-          return fallback.json();
+        function distance(a, b) {
+          const x = (b[0] - a[0]) * Math.cos(((a[1] + b[1]) / 2) * Math.PI / 180);
+          const y = b[1] - a[1];
+          return Math.sqrt(x * x + y * y);
         }
 
+        function bearingBetween(a, b) {
+          const y = Math.sin((b[0] - a[0]) * Math.PI / 180) * Math.cos(b[1] * Math.PI / 180);
+          const x = Math.cos(a[1] * Math.PI / 180) * Math.sin(b[1] * Math.PI / 180) - Math.sin(a[1] * Math.PI / 180) * Math.cos(b[1] * Math.PI / 180) * Math.cos((b[0] - a[0]) * Math.PI / 180);
+          return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+        }
+
+        function transparentGradient() { return ['interpolate', ['linear'], ['line-progress'], 0, 'rgba(255,0,0,0)', 1, 'rgba(255,0,0,0)']; }
+        function setGradient(layerId, gradient) { if (map.getLayer(layerId)) map.setPaintProperty(layerId, 'line-gradient', gradient); }
+        function hexToRgba(hex, alpha) { const value = hex.replace('#', ''); const r = parseInt(value.slice(0, 2), 16); const g = parseInt(value.slice(2, 4), 16); const b = parseInt(value.slice(4, 6), 16); return `rgba(${r}, ${g}, ${b}, ${clamp(alpha, 0, 1)})`; }
+        function hideModernPoiLabels(targetMap) { const hidden = [/poi-label/, /transit-label/, /airport-label/, /settlement-subdivision-label/, /building-number-label/]; for (const layer of targetMap.getStyle().layers || []) { if (layer.type === 'symbol' && hidden.some((pattern) => pattern.test(layer.id))) targetMap.setLayoutProperty(layer.id, 'visibility', 'none'); } }
+        async function loadRemoteConfig() { try { const response = await fetch('/api/config', { cache: 'no-store' }); return response.ok ? response.json() : {}; } catch (error) { return {}; } }
+        async function loadStoryline(config) { if (config.supabaseUrl && config.supabaseAnonKey) { try { const endpoint = `${config.supabaseUrl}/rest/v1/scenes?select=*&order=sort_order.asc`; const response = await fetch(endpoint, { headers: { apikey: config.supabaseAnonKey, authorization: `Bearer ${config.supabaseAnonKey}` } }); const rows = response.ok ? await response.json() : []; if (rows.length) return { scenes: rows.map((row) => ({ id: row.id, title: row.title, lngLat: row.lng_lat, zoom: row.zoom, pitch: row.pitch, bearing: row.bearing, duration: row.duration, overlayImage: row.overlay_image, overlayCoords: row.overlay_coords, highlightRouteId: row.highlight_route_id })) }; } catch (error) { console.warn(error); } } const fallback = await fetch('./storyline.json'); return fallback.json(); }
         function waitForIdle(targetMap) { return targetMap.loaded() && targetMap.areTilesLoaded() ? Promise.resolve() : once(targetMap, 'idle'); }
         function once(targetMap, eventName) { return new Promise((resolve) => targetMap.once(eventName, resolve)); }
         function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
         function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
+        function lerp(a, b, t) { return a + (b - a) * t; }
         function easeInOutCubic(t) { return t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
+        function easeInOutSine(t) { return -(Math.cos(Math.PI * t) - 1) / 2; }
       }());
     </script>
   </body>
