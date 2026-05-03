@@ -83,6 +83,7 @@
           await once(map, 'moveend');
           await followRouteCamera(map, 8200);
           await smoothOutro(map);
+          await finalRouteSweep(map, 5200);
           titleCard.classList.add('visible');
         }
 
@@ -90,6 +91,22 @@
           setReveal(map, 1, .95);
           map.easeTo({ center: [140.08, 35.29], zoom: 8.9, pitch: 58, bearing: 0, duration: 6500, easing: easeInOutCubic, essential: true });
           await once(map, 'moveend');
+        }
+
+        async function finalRouteSweep(map, duration) {
+          stopEnergyPulse();
+          setReveal(map, 0, .9);
+          const started = performance.now();
+          return new Promise((resolve) => {
+            const frame = (now) => {
+              const progress = clamp((now - started) / duration, 0, 1);
+              const eased = easeInOutCubic(progress);
+              const pulse = .82 + Math.pow(Math.sin((now - started) / 1000 * 7.4), 8) * .18;
+              setReveal(map, eased, pulse);
+              if (progress < 1) requestAnimationFrame(frame); else { setReveal(map, 1, 1); resolve(); }
+            };
+            requestAnimationFrame(frame);
+          });
         }
 
         async function goToScene(map, nextIndex, options = {}) {
@@ -143,10 +160,11 @@
           targetMap.addSource('route128', { type: 'geojson', data: route, lineMetrics: true });
           const width = (a, b, c) => ['interpolate', ['linear'], ['zoom'], 8, a, 14, b, 17, c];
           const layers = [
-            ['route128-glow-outer', 12, 31, 52, 13, .72],
-            ['route128-glow-inner', 7, 19, 32, 5, .9],
-            ['route128-hot-core', 4, 11, 19, 1.2, .98],
-            ['route128-core', 2.2, 6.5, 11, .25, 1]
+            ['route128-reflection', 38, 88, 145, 34, .28],
+            ['route128-glow-outer', 17, 42, 70, 18, .88],
+            ['route128-glow-inner', 9, 24, 40, 6, .98],
+            ['route128-hot-core', 5, 14, 24, 1.6, 1],
+            ['route128-core', 2.6, 7.5, 13, .2, 1]
           ];
           for (const [id, w8, w14, w17, blur, opacity] of layers) targetMap.addLayer({ id, type: 'line', source: 'route128', paint: { 'line-width': width(w8, w14, w17), 'line-blur': blur, 'line-opacity': opacity, 'line-gradient': transparentGradient() } });
         }
@@ -207,10 +225,11 @@
         function stopEnergyPulse() { if (state.energyFrame) cancelAnimationFrame(state.energyFrame); state.energyFrame = null; }
         function setReveal(map, progress, pulse) {
           const p = clamp(progress, 0, 1);
-          setGradient(map, 'route128-glow-outer', gradientFor('#ff0808', .42 + pulse * .18, p, .08));
-          setGradient(map, 'route128-glow-inner', gradientFor('#ff2a16', .62 + pulse * .16, p, .055));
-          setGradient(map, 'route128-hot-core', gradientFor('#ff6a38', .82 + pulse * .12, p, .035));
-          setGradient(map, 'route128-core', gradientFor('#fff0dc', .94, p, .018));
+          setGradient(map, 'route128-reflection', gradientFor('#ff1208', .12 + pulse * .12, p, .13));
+          setGradient(map, 'route128-glow-outer', gradientFor('#ff0808', .58 + pulse * .22, p, .09));
+          setGradient(map, 'route128-glow-inner', gradientFor('#ff2a16', .74 + pulse * .18, p, .062));
+          setGradient(map, 'route128-hot-core', gradientFor('#ff6a38', .88 + pulse * .12, p, .038));
+          setGradient(map, 'route128-core', gradientFor('#fff0dc', .96, p, .018));
         }
 
         function gradientFor(color, opacity, progress, softness) { const rgba = hexToRgba(color, opacity); const dim = hexToRgba(color, opacity * .45); const p = clamp(progress, 0, 1); return ['interpolate', ['linear'], ['line-progress'], 0, rgba, Math.max(0, p - softness), dim, p, rgba, Math.min(1, p + .002), 'rgba(255, 0, 0, 0)', 1, 'rgba(255, 0, 0, 0)']; }
