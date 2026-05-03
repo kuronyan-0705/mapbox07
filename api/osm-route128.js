@@ -1,10 +1,11 @@
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 const ROUTE_128_RELATION_ID = 9069158;
-const CHIBA_BBOX = '34.90,139.75,35.70,140.45';
-const MAX_JOIN_KM = 1.8;
+const CHIBA_BBOX = '34.88,139.72,35.72,140.45';
+const MAX_JOIN_KM = 0.12;
+const MIN_COMPONENT_KM = 1.2;
 
 export default async function handler(request, response) {
-  response.setHeader('cache-control', 's-maxage=86400, stale-while-revalidate=604800');
+  response.setHeader('cache-control', 'no-store');
 
   try {
     const geojson = await fetchRoute128FromOverpass();
@@ -23,8 +24,11 @@ async function fetchRoute128FromOverpass() {
     (
       way["highway"]["ref"~"(^|;| )128($|;| )"](${CHIBA_BBOX});
       way["highway"]["nat_ref"~"(^|;| )128($|;| )"](${CHIBA_BBOX});
+      way["highway"]["name"~"国道128号"](${CHIBA_BBOX});
       rel(${ROUTE_128_RELATION_ID});
-      way(r)["highway"];
+      way(r)["highway"]["ref"~"(^|;| )128($|;| )"];
+      way(r)["highway"]["nat_ref"~"(^|;| )128($|;| )"];
+      way(r)["highway"]["name"~"国道128号"];
     );
     out tags geom;
   `;
@@ -43,27 +47,31 @@ async function fetchRoute128FromOverpass() {
   const wayCoordinates = osm.elements
     .filter((element) => element.type === 'way' && Array.isArray(element.geometry) && element.geometry.length >= 2)
     .filter((way) => isRoute128Way(way))
-    .map((way) => way.geometry.map((point) => [point.lon, point.lat]));
+    .map((way) => deduplicate(way.geometry.map((point) => [point.lon, point.lat])))
+    .filter((coords) => coords.length >= 2);
 
   if (!wayCoordinates.length) throw new Error('No Route 128 ways were included in the Overpass response');
 
-  const components = buildConnectedComponents(wayCoordinates);
-  const best = components
-    .filter((coords) => coords.length >= 2)
-    .sort((a, b) => pathLengthKm(b) - pathLengthKm(a))[0];
+  const components = buildConnectedComponents(wayCoordinates)
+    .map((coords) => orientNorthToSouth(deduplicate(coords)))
+    .filter((coords) => coords.length >= 2 && pathLengthKm(coords) >= MIN_COMPONENT_KM)
+    .sort((a, b) => pathLengthKm(b) - pathLengthKm(a));
 
-  if (!best || best.length < 2) throw new Error('Could not build a continuous Route 128 component');
+  if (!components.length) throw new Error('Could not build land-road Route 128 components');
 
-  const coordinates = orientNorthToSouth(deduplicate(best));
+  const main = components[0];
 
   return {
     type: 'FeatureCollection',
     metadata: {
       source: 'OpenStreetMap via Overpass API',
       relationId: ROUTE_128_RELATION_ID,
-      extraction: 'highway ways tagged ref/nat_ref=128, longest connected component, no long sea-gap joins',
+      extraction: 'strict highway ways tagged ref/nat_ref/name=128; only exact/near road-node joins; no visual sea-gap stitching',
       license: 'ODbL-1.0',
       maxJoinKm: MAX_JOIN_KM,
+      componentCount: components.length,
+      totalComponentKm: round(components.reduce((sum, coords) => sum + pathLengthKm(coords), 0), 2),
+      cameraPathKm: round(pathLengthKm(main), 2),
       extractedAt: new Date().toISOString()
     },
     features: [
@@ -74,9 +82,11 @@ async function fetchRoute128FromOverpass() {
           name: '国道128号',
           ref: '128',
           network: 'JP:national',
-          osm_relation_id: ROUTE_128_RELATION_ID
+          osm_relation_id: ROUTE_128_RELATION_ID,
+          component: 0,
+          role: 'camera-path'
         },
-        geometry: { type: 'LineString', coordinates }
+        geometry: { type: 'LineString', coordinates: main }
       }
     ]
   };
@@ -84,8 +94,8 @@ async function fetchRoute128FromOverpass() {
 
 function isRoute128Way(way) {
   const tags = way.tags || {};
-  const ref = `${tags.ref || ''};${tags.nat_ref || ''};${tags.name || ''}`;
-  return /(^|[^0-9])128([^0-9]|$)/.test(ref) || /国道128号/.test(ref);
+  const refs = [tags.ref, tags.nat_ref, tags.name, tags['name:ja']].filter(Boolean).join(';');
+  return /(^|[^0-9])128([^0-9]|$)/.test(refs) || /国道128号/.test(refs);
 }
 
 function buildConnectedComponents(ways) {
@@ -102,7 +112,7 @@ function buildConnectedComponents(ways) {
         const candidate = remaining[index];
         const join = bestEndpointJoin(component, candidate);
         if (join.distanceKm <= MAX_JOIN_KM) {
-          component = applyJoin(component, candidate, join.mode);
+          component = applyJoin(component, candidate, join.mode, join.distanceKm);
           remaining.splice(index, 1);
           changed = true;
         }
@@ -129,20 +139,21 @@ function bestEndpointJoin(a, b) {
   return candidates.sort((left, right) => left.distanceKm - right.distanceKm)[0];
 }
 
-function applyJoin(base, next, mode) {
-  if (mode === 'append') return appendCoordinates(base, next);
-  if (mode === 'appendReverse') return appendCoordinates(base, next.slice().reverse());
-  if (mode === 'prepend') return appendCoordinates(next, base);
-  return appendCoordinates(next.slice().reverse(), base);
+function applyJoin(base, next, mode, joinDistanceKm) {
+  if (mode === 'append') return appendCoordinates(base, next, joinDistanceKm);
+  if (mode === 'appendReverse') return appendCoordinates(base, next.slice().reverse(), joinDistanceKm);
+  if (mode === 'prepend') return appendCoordinates(next, base, joinDistanceKm);
+  return appendCoordinates(next.slice().reverse(), base, joinDistanceKm);
 }
 
-function appendCoordinates(base, next) {
+function appendCoordinates(base, next, joinDistanceKm) {
   if (!base.length) return next;
   if (!next.length) return base;
 
   const last = base[base.length - 1];
   const first = next[0];
   const shouldSkipFirst = distanceKm(last, first) < 0.003;
+  if (joinDistanceKm > 0.03 && !shouldSkipFirst) return base.concat([first], next.slice(1));
   return base.concat(shouldSkipFirst ? next.slice(1) : next);
 }
 
@@ -175,6 +186,11 @@ function distanceKm(a, b) {
   const lat2 = toRadians(b[1]);
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
   return 2 * earthRadiusKm * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function round(value, decimals) {
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
 }
 
 function toRadians(value) {
