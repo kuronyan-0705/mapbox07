@@ -1,12 +1,16 @@
 const VERIFIED_ENDPOINTS = {
   '128': {
-    start: [{ label: '千葉市中央区 広小路交差点付近', lngLat: [140.12462, 35.61059], source: 'verified project preset', confidence: 'high' }],
-    end: [{ label: '館山市方面 終点付近', lngLat: [139.86315, 34.99318], source: 'verified project preset', confidence: 'medium' }],
+    termini: [
+      { label: '千葉市中央区 広小路交差点付近', lngLat: [140.12462, 35.61059], source: 'verified project preset', confidence: 'high' },
+      { label: '館山市方面 終点付近', lngLat: [139.86315, 34.99318], source: 'verified project preset', confidence: 'medium' }
+    ],
     bounds: [139.72, 34.86, 140.62, 35.72]
   },
   '134': {
-    start: [{ label: '横須賀市 三春町二丁目交差点付近', lngLat: [139.686972, 35.266611], source: 'verified route endpoint', confidence: 'high' }],
-    end: [{ label: '中郡大磯町 大磯駅入口交差点付近', lngLat: [139.316528, 35.311083], source: 'verified route endpoint', confidence: 'high' }],
+    termini: [
+      { label: '横須賀市 三春町二丁目交差点付近', lngLat: [139.686972, 35.266611], source: 'verified route endpoint', confidence: 'high' },
+      { label: '中郡大磯町 大磯駅入口交差点付近', lngLat: [139.316528, 35.311083], source: 'verified route endpoint', confidence: 'high' }
+    ],
     bounds: [139.25, 35.12, 139.78, 35.38]
   }
 };
@@ -23,35 +27,48 @@ export default async function handler(request, response) {
   try {
     const verified = VERIFIED_ENDPOINTS[routeNumber];
     if (verified) {
-      response.status(200).json({
+      response.status(200).json(routeResponse({
         routeNumber,
         relationId: null,
         relationLabel: `国道${routeNumber}号`,
-        start: verified.start,
-        end: verified.end,
+        termini: verified.termini,
         bounds: verified.bounds,
-        sourceStatus: { verified: true, wikidataError: null }
-      });
+        sourceStatus: { verified: true, wikidataError: null, osmEndpointError: null }
+      }));
       return;
     }
 
     const wikidata = await lookupWikidataRoute(routeNumber);
-    const start = mergeCandidates([], wikidata.start);
-    const end = mergeCandidates([], wikidata.end);
-    const bounds = boundsFromCandidates([...start, ...end]);
+    const osm = wikidata.relationId ? await inferOsmEndpointCandidates(wikidata.relationId).catch((error) => ({ error: error.message, termini: [] })) : { termini: [] };
+    const termini = mergeCandidates(osm.termini, wikidata.termini);
+    const bounds = boundsFromCandidates(termini);
 
-    response.status(200).json({
+    response.status(200).json(routeResponse({
       routeNumber,
       relationId: wikidata.relationId || null,
       relationLabel: wikidata.label || `国道${routeNumber}号`,
-      start,
-      end,
+      termini,
       bounds,
-      sourceStatus: { verified: false, wikidataError: null }
-    });
+      sourceStatus: { verified: false, wikidataError: null, osmEndpointError: osm.error || null }
+    }));
   } catch (error) {
     response.status(502).json({ error: `国道${routeNumber}号の起終点候補を取得できませんでした`, detail: error.message });
   }
+}
+
+function routeResponse({ routeNumber, relationId, relationLabel, termini, bounds, sourceStatus }) {
+  const cleanTermini = mergeCandidates(termini, []);
+  const first = cleanTermini[0];
+  const second = cleanTermini[1];
+  return {
+    routeNumber,
+    relationId,
+    relationLabel,
+    start: cleanTermini,
+    end: second ? [second, first, ...cleanTermini.slice(2)] : cleanTermini,
+    bounds: bounds || boundsFromCandidates(cleanTermini),
+    sourceStatus
+  };
 }
 
 async function lookupWikidataRoute(routeNumber) {
@@ -64,19 +81,67 @@ async function lookupWikidataRoute(routeNumber) {
   const relationId = readFirstNumericClaim(route, 'P402');
   const terminusIds = readEntityClaims(route, 'P559');
   const endpointEntities = terminusIds.length ? await fetchEntities(terminusIds.slice(0, 8), 'claims|labels|descriptions') : { entities: {} };
-  const endpoints = Object.values(endpointEntities.entities || {})
+  const termini = Object.values(endpointEntities.entities || {})
     .map((entity) => candidateFromEntity(entity, 'Wikidata terminus'))
     .filter(Boolean);
 
   const point = readCoordinateClaim(route, 'P625');
-  const routePoint = point ? [{ label: `${labelOf(route)} 中心座標`, lngLat: point, source: 'Wikidata route coordinate', confidence: 'low' }] : [];
+  if (point) termini.push({ label: `${labelOf(route)} 周辺`, lngLat: point, source: 'Wikidata route coordinate', confidence: 'low' });
 
-  return {
-    relationId,
-    label: labelOf(route),
-    start: endpoints.slice(0, 1).concat(routePoint),
-    end: endpoints.slice(1, 2)
-  };
+  return { relationId, label: labelOf(route), termini };
+}
+
+async function inferOsmEndpointCandidates(relationId) {
+  const osm = await fetchOsmJson(`https://api.openstreetmap.org/api/0.6/relation/${relationId}/full.json`);
+  const elements = osm.elements || [];
+  const relation = elements.find((element) => element.type === 'relation' && element.id === relationId);
+  if (!relation?.members?.length) throw new Error(`relation ${relationId} missing`);
+
+  const nodeById = new Map(elements
+    .filter((element) => element.type === 'node' && typeof element.lon === 'number' && typeof element.lat === 'number')
+    .map((node) => [node.id, [node.lon, node.lat]]));
+  const wayById = new Map(elements
+    .filter((element) => element.type === 'way' && Array.isArray(element.nodes) && element.nodes.length >= 2 && isUsableRoadWay(element))
+    .map((way) => [way.id, way]));
+
+  const graph = buildGraph(relation.members
+    .filter((member) => member.type === 'way')
+    .map((member) => wayById.get(member.ref))
+    .filter(Boolean)
+    .map((way) => way.nodes.map((nodeId) => nodeById.get(nodeId)).filter(Boolean))
+    .filter((coords) => coords.length >= 2));
+
+  if (graph.coords.size < 2) throw new Error('OSM relation has too few usable route nodes');
+  const endpointKeys = [...graph.coords.keys()].filter((key) => (graph.adjacency.get(key) || []).length <= 1);
+  const candidates = endpointKeys.length >= 2 ? endpointKeys : [...graph.coords.keys()];
+  const aKey = farthestKeyFrom(graph, candidates[0], candidates);
+  const bKey = farthestKeyFrom(graph, aKey, candidates);
+  const raw = [graph.coords.get(aKey), graph.coords.get(bKey)].filter(Boolean);
+
+  const termini = [];
+  for (let index = 0; index < raw.length; index += 1) {
+    const lngLat = raw[index];
+    const label = await reverseGeocode(lngLat).catch(() => `推定端点${index + 1}`);
+    termini.push({ label, lngLat: roundCoord(lngLat), source: 'OSM route graph endpoint', confidence: 'medium' });
+  }
+  return { termini };
+}
+
+async function reverseGeocode([lng, lat]) {
+  const data = await fetchOsmJson('https://nominatim.openstreetmap.org/reverse?' + new URLSearchParams({
+    format: 'jsonv2',
+    lat: String(lat),
+    lon: String(lng),
+    zoom: '16',
+    addressdetails: '1',
+    'accept-language': 'ja'
+  }));
+  const address = data.address || {};
+  const road = address.road || address.neighbourhood || address.suburb || address.quarter;
+  const city = address.city || address.town || address.village || address.municipality || address.county;
+  const state = address.state || address.province;
+  const parts = [state, city, road].filter(Boolean);
+  return parts.length ? `${parts.join(' ')} 付近` : (data.name || data.display_name || '地名未取得');
 }
 
 async function searchRouteEntities(routeNumber) {
@@ -168,6 +233,65 @@ async function fetchWikidataJson(url) {
   }
 }
 
+async function fetchOsmJson(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'mapbox07-route-director/1.0' }, signal: controller.signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function buildGraph(ways) {
+  const coords = new Map();
+  const adjacency = new Map();
+  for (const way of ways) {
+    const clean = deduplicate(way);
+    for (let index = 0; index < clean.length - 1; index += 1) {
+      const a = clean[index];
+      const b = clean[index + 1];
+      const weight = distanceKm(a, b);
+      if (weight <= 0 || weight > 3.5) continue;
+      const aKey = coordKey(a);
+      const bKey = coordKey(b);
+      coords.set(aKey, a);
+      coords.set(bKey, b);
+      addEdge(adjacency, aKey, bKey, weight);
+      addEdge(adjacency, bKey, aKey, weight);
+    }
+  }
+  return { coords, adjacency };
+}
+
+function addEdge(adjacency, from, to, weight) {
+  if (!adjacency.has(from)) adjacency.set(from, []);
+  const existing = adjacency.get(from).find((edge) => edge.to === to);
+  if (existing) existing.weight = Math.min(existing.weight, weight);
+  else adjacency.get(from).push({ to, weight });
+}
+
+function farthestKeyFrom(graph, fromKey, keys) {
+  const from = graph.coords.get(fromKey);
+  let bestKey = fromKey;
+  let bestDistance = -Infinity;
+  for (const key of keys.slice(0, 500)) {
+    const distance = distanceKm(from, graph.coords.get(key));
+    if (distance > bestDistance) {
+      bestDistance = distance;
+      bestKey = key;
+    }
+  }
+  return bestKey;
+}
+
+function isUsableRoadWay(way) {
+  const highway = way.tags?.highway;
+  return Boolean(highway) && !['footway', 'cycleway', 'path', 'steps', 'pedestrian', 'service', 'track'].includes(highway);
+}
+
 function mergeCandidates(primary = [], secondary = []) {
   const seen = new Set();
   const result = [];
@@ -206,7 +330,38 @@ function cleanRouteNumber(value) {
   return String(value || '').replace(/[^0-9A-Za-z_-]/g, '').slice(0, 32);
 }
 
+function coordKey(coord) {
+  return `${coord[0].toFixed(6)},${coord[1].toFixed(6)}`;
+}
+
+function deduplicate(coords) {
+  const result = [];
+  for (const coord of coords) {
+    const last = result[result.length - 1];
+    if (!last || distanceKm(last, coord) > 0.003) result.push(coord);
+  }
+  return result;
+}
+
+function roundCoord(coord) {
+  return [round(coord[0], 6), round(coord[1], 6)];
+}
+
+function distanceKm(a, b) {
+  const earthRadiusKm = 6371;
+  const dLat = toRadians(b[1] - a[1]);
+  const dLon = toRadians(b[0] - a[0]);
+  const lat1 = toRadians(a[1]);
+  const lat2 = toRadians(b[1]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 2 * earthRadiusKm * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
 function round(value, decimals) {
   const factor = 10 ** decimals;
   return Math.round(value * factor) / factor;
+}
+
+function toRadians(value) {
+  return value * Math.PI / 180;
 }
