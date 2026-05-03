@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>地点ズーム演出</title>
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.11.0/mapbox-gl.css" rel="stylesheet">
+    <style>
+      html, body, #map { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #151c21; }
+      .mapboxgl-ctrl-logo, .mapboxgl-ctrl-attrib, .mapboxgl-ctrl-bottom-left, .mapboxgl-ctrl-bottom-right { display: none !important; }
+      #grade { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at 50% 42%, rgba(0,0,0,0) 0, rgba(0,0,0,.08) 58%, rgba(0,0,0,.36) 100%); }
+      #scan { position: fixed; inset: 0; pointer-events: none; background: linear-gradient(rgba(255,60,40,.02), rgba(0,0,0,.08)); mix-blend-mode: screen; opacity: .65; }
+      #title-card { position: fixed; left: clamp(28px, 5vw, 72px); right: clamp(28px, 5vw, 72px); bottom: clamp(28px, 7vh, 86px); opacity: 0; transform: translateY(16px); transition: opacity 900ms ease, transform 900ms ease; pointer-events: none; text-shadow: 0 4px 30px rgba(255, 28, 20, .7), 0 3px 20px rgba(0,0,0,.95); visibility: hidden; }
+      #title-card.visible { opacity: 1; transform: translateY(0); visibility: visible; }
+      #kicker { margin: 0 0 10px; color: #ff9b88; font: 700 clamp(12px, 1.15vw, 17px)/1.45 system-ui, sans-serif; letter-spacing: 0; }
+      #title { margin: 0; color: #fff1ec; font: 800 clamp(28px, 4.1vw, 68px)/1.1 "Yu Gothic", Meiryo, system-ui, sans-serif; letter-spacing: 0; white-space: nowrap; }
+      #status { position: fixed; right: 18px; top: 16px; max-width: min(460px, calc(100vw - 36px)); padding: 8px 10px; border: 1px solid rgba(255, 66, 44, .34); background: rgba(0, 0, 0, .46); color: #ffe7df; font: 12px/1.5 system-ui, sans-serif; pointer-events: none; box-shadow: 0 0 22px rgba(255, 24, 24, .18); }
+      body.ready #status { opacity: .38; }
+      body.recording #status { display: none; }
+      @media (max-width: 760px) { #title { white-space: normal; font-size: clamp(28px, 9vw, 48px); } }
+    </style>
+  </head>
+  <body>
+    <main id="map"></main>
+    <div id="scan"></div>
+    <div id="grade"></div>
+    <section id="title-card">
+      <p id="kicker">Point / Drone orbit</p>
+      <h1 id="title">一宮城跡</h1>
+    </section>
+    <div id="status">Loading configuration...</div>
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.11.0/mapbox-gl.js"></script>
+    <script>
+      (async function boot() {
+        const query = new URLSearchParams(location.search);
+        if (query.get('record') === '1') document.body.classList.add('recording');
+        const DEFAULT_PRESET = {
+          pointTitle: '一宮城跡', pointKicker: 'Point / Drone orbit',
+          pointLngLat: [140.3642, 35.3741], startCenter: [138.4, 36.2],
+          startZoom: 4.2, approachZoom: 15.6, groundZoom: 18.45,
+          pitch: 82, terrain: 2.1, approachDuration: 7800, orbitDuration: 9000,
+          orbitTurns: 1.15, markerColor: '#ff1208'
+        };
+        const preset = loadPreset(DEFAULT_PRESET);
+        const status = document.getElementById('status');
+        const titleCard = document.getElementById('title-card');
+        const title = document.getElementById('title');
+        const kicker = document.getElementById('kicker');
+        title.textContent = preset.pointTitle;
+        kicker.textContent = preset.pointKicker;
+        document.title = preset.pointTitle;
+
+        try {
+          const config = await loadRemoteConfig();
+          const token = (window.MAPBOX_TOKEN || config.mapboxToken || query.get('token') || '').trim();
+          if (!token) throw new Error('Mapbox token required');
+          mapboxgl.accessToken = token;
+          status.textContent = 'Loading map...';
+          const map = new mapboxgl.Map({
+            container: 'map', style: 'mapbox://styles/mapbox/dark-v11',
+            center: preset.startCenter, zoom: preset.startZoom, pitch: 0, bearing: -25,
+            antialias: true, attributionControl: false, logoPosition: 'bottom-left'
+          });
+          map.dragRotate.disable();
+          map.touchZoomRotate.disableRotation();
+          await once(map, 'load');
+          tuneMap(map);
+          addColorZones(map);
+          addTerrain(map);
+          addBuildings(map);
+          hideModernPoiLabels(map);
+          addPointEffects(map);
+          await waitForIdle(map);
+          document.body.classList.add('ready');
+          status.textContent = 'Space: replay / R: replay';
+          await wait(700);
+          playPointFilm(map);
+          window.addEventListener('keydown', (event) => {
+            if (event.code === 'Space' || event.key.toLowerCase() === 'r') { event.preventDefault(); playPointFilm(map); }
+          });
+        } catch (error) {
+          console.error(error);
+          status.textContent = error.message;
+          document.body.classList.add('error');
+        }
+
+        async function playPointFilm(map) {
+          titleCard.classList.remove('visible');
+          map.stop();
+          map.jumpTo({ center: preset.startCenter, zoom: preset.startZoom, pitch: 0, bearing: -25 });
+          setMarkerIntensity(map, 0);
+          await wait(400);
+          map.easeTo({ center: preset.pointLngLat, zoom: preset.approachZoom, pitch: 50, bearing: 45, duration: Math.round(preset.approachDuration * .52), easing: easeInOutCubic, essential: true });
+          await once(map, 'moveend');
+          map.easeTo({ center: preset.pointLngLat, zoom: preset.groundZoom, pitch: preset.pitch, bearing: 138, duration: Math.round(preset.approachDuration * .48), easing: easeInOutCubic, essential: true });
+          await once(map, 'moveend');
+          setMarkerIntensity(map, 1);
+          await orbitGround(map);
+          titleCard.classList.add('visible');
+          pulseMarker(map);
+        }
+
+        function orbitGround(map) {
+          const started = performance.now();
+          const baseBearing = map.getBearing();
+          const total = 360 * preset.orbitTurns;
+          return new Promise((resolve) => {
+            const frame = (now) => {
+              const progress = clamp((now - started) / preset.orbitDuration, 0, 1);
+              const eased = easeInOutSine(progress);
+              const breathingZoom = preset.groundZoom + Math.sin(eased * Math.PI * 2.2) * .12;
+              const breathingPitch = preset.pitch - 2.4 + Math.sin(eased * Math.PI * 2) * 2.4;
+              map.jumpTo({ center: preset.pointLngLat, zoom: breathingZoom, pitch: breathingPitch, bearing: baseBearing + total * eased });
+              setMarkerIntensity(map, .84 + Math.pow(Math.sin(progress * Math.PI * 8), 8) * .16);
+              if (progress < 1) requestAnimationFrame(frame); else resolve();
+            };
+            requestAnimationFrame(frame);
+          });
+        }
+
+        function addPointEffects(map) {
+          map.addSource('target-point', { type: 'geojson', data: { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: preset.pointLngLat } }] } });
+          map.addLayer({ id: 'target-glow-outer', type: 'circle', source: 'target-point', paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 4, 16, 28, 19, 70], 'circle-color': preset.markerColor, 'circle-opacity': 0, 'circle-blur': .8, 'circle-pitch-scale': 'map' } });
+          map.addLayer({ id: 'target-glow-core', type: 'circle', source: 'target-point', paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 2, 16, 9, 19, 18], 'circle-color': '#fff0dc', 'circle-opacity': 0, 'circle-blur': .18, 'circle-pitch-scale': 'map' } });
+        }
+
+        function pulseMarker(map) {
+          const started = performance.now();
+          const frame = (now) => {
+            const pulse = .78 + Math.pow(Math.sin((now - started) / 1000 * 5.6), 8) * .22;
+            setMarkerIntensity(map, pulse);
+            requestAnimationFrame(frame);
+          };
+          requestAnimationFrame(frame);
+        }
+
+        function setMarkerIntensity(map, value) {
+          if (!map.getLayer('target-glow-outer')) return;
+          map.setPaintProperty('target-glow-outer', 'circle-opacity', .56 * value);
+          map.setPaintProperty('target-glow-core', 'circle-opacity', .96 * value);
+        }
+
+        function tuneMap(map) { for (const layer of map.getStyle().layers || []) { if (layer.type === 'background') map.setPaintProperty(layer.id, 'background-color', '#182026'); if (layer.type === 'fill') { map.setPaintProperty(layer.id, 'fill-color', '#4b5357'); map.setPaintProperty(layer.id, 'fill-opacity', .88); } if (layer.type === 'line') { map.setPaintProperty(layer.id, 'line-color', '#7a8388'); map.setPaintProperty(layer.id, 'line-opacity', .6); } if (layer.type === 'symbol') { map.setPaintProperty(layer.id, 'text-color', '#c1c8cc'); map.setPaintProperty(layer.id, 'text-halo-color', '#20282d'); map.setPaintProperty(layer.id, 'text-halo-width', .8); map.setPaintProperty(layer.id, 'text-opacity', .72); map.setPaintProperty(layer.id, 'icon-opacity', .38); } } }
+        function addColorZones(map) { const firstSymbol = (map.getStyle().layers || []).find((layer) => layer.type === 'symbol'); const before = firstSymbol && firstSymbol.id; map.addLayer({ id: 'cinematic-water-color', type: 'fill', source: 'composite', 'source-layer': 'water', paint: { 'fill-color': '#21485a', 'fill-opacity': .82 } }, before); map.addLayer({ id: 'cinematic-forest-color', type: 'fill', source: 'composite', 'source-layer': 'landuse', filter: ['in', ['get', 'class'], ['literal', ['wood', 'forest', 'park', 'grass']]], paint: { 'fill-color': '#4d594a', 'fill-opacity': .36 } }, before); map.addLayer({ id: 'cinematic-city-color', type: 'fill', source: 'composite', 'source-layer': 'landuse', filter: ['in', ['get', 'class'], ['literal', ['residential', 'commercial', 'industrial', 'retail']]], paint: { 'fill-color': '#5e5a62', 'fill-opacity': .5 } }, before); }
+        function addTerrain(map) { map.addSource('mapbox-dem', { type: 'raster-dem', url: 'mapbox://mapbox.mapbox-terrain-dem-v1', tileSize: 512, maxzoom: 14 }); map.setTerrain({ source: 'mapbox-dem', exaggeration: preset.terrain }); map.addLayer({ id: 'cinematic-hillshade', type: 'hillshade', source: 'mapbox-dem', paint: { 'hillshade-shadow-color': '#11161a', 'hillshade-highlight-color': '#c0c8cc', 'hillshade-accent-color': '#758087', 'hillshade-illumination-direction': 315, 'hillshade-exaggeration': 1.0 } }); map.setFog({ color: 'rgb(28, 32, 36)', 'high-color': 'rgb(86, 92, 98)', 'horizon-blend': .08, 'space-color': 'rgb(5, 7, 9)', 'star-intensity': 0 }); }
+        function addBuildings(map) { const labelLayer = (map.getStyle().layers || []).find((layer) => layer.type === 'symbol' && layer.layout && layer.layout['text-field']); map.addLayer({ id: '3d-buildings-cinematic', source: 'composite', 'source-layer': 'building', filter: ['==', ['get', 'extrude'], 'true'], type: 'fill-extrusion', minzoom: 14, paint: { 'fill-extrusion-color': ['interpolate', ['linear'], ['zoom'], 14, '#3f2527', 17, '#6d3838'], 'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'height']], 'fill-extrusion-base': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'min_height']], 'fill-extrusion-opacity': .82, 'fill-extrusion-vertical-gradient': true } }, labelLayer && labelLayer.id); }
+        function hideModernPoiLabels(map) { const hidden = [/poi-label/, /transit-label/, /airport-label/, /settlement-subdivision-label/, /building-number-label/]; for (const layer of map.getStyle().layers || []) { if (layer.type === 'symbol' && hidden.some((pattern) => pattern.test(layer.id))) map.setLayoutProperty(layer.id, 'visibility', 'none'); } }
+        function loadPreset(defaults) { let saved = {}; try { saved = JSON.parse(localStorage.getItem('pointDirectorPreset') || '{}'); } catch (error) {} const params = Object.fromEntries(new URLSearchParams(location.search).entries()); return normalizePreset({ ...defaults, ...saved, ...params }, defaults); }
+        function normalizePreset(value, defaults) { const coord = (key) => Array.isArray(value[key]) ? value[key] : parseCoord(value[key], defaults[key]); const number = (key) => finiteNumber(value[key], defaults[key]); return { ...defaults, ...value, pointTitle: String(value.pointTitle || defaults.pointTitle), pointKicker: String(value.pointKicker || defaults.pointKicker), pointLngLat: coord('pointLngLat'), startCenter: coord('startCenter'), startZoom: number('startZoom'), approachZoom: number('approachZoom'), groundZoom: number('groundZoom'), pitch: number('pitch'), terrain: number('terrain'), approachDuration: number('approachDuration'), orbitDuration: number('orbitDuration'), orbitTurns: number('orbitTurns'), markerColor: String(value.markerColor || defaults.markerColor) }; }
+        function parseCoord(value, fallback) { const parts = String(value || '').split(',').map((part) => Number(part.trim())); return parts.length === 2 && parts.every(Number.isFinite) ? parts : fallback; }
+        function finiteNumber(value, fallback) { const number = Number(value); return Number.isFinite(number) ? number : fallback; }
+        async function loadRemoteConfig() { try { const response = await fetch('/api/config', { cache: 'no-store' }); return response.ok ? response.json() : {}; } catch (error) { return {}; } }
+        function waitForIdle(map) { return map.loaded() && map.areTilesLoaded() ? Promise.resolve() : once(map, 'idle'); }
+        function once(map, eventName) { return new Promise((resolve) => map.once(eventName, resolve)); }
+        function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+        function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
+        function easeInOutCubic(t) { return t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
+        function easeInOutSine(t) { return -(Math.cos(Math.PI * t) - 1) / 2; }
+      }());
+    </script>
+  </body>
+</html>
