@@ -31,11 +31,7 @@
     <script src="https://api.mapbox.com/mapbox-gl-js/v3.11.0/mapbox-gl.js"></script>
     <script>
       (async function boot() {
-        const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
-        const RELATION_ID = 9069158;
         const CHIBA_START = [140.12462, 35.61059];
-        const TATEYAMA_END = [139.86315, 34.99318];
-        const MAX_GAP_KM = 0.35;
         const titleCard = document.getElementById('title-card');
         const sceneTitle = document.getElementById('scene-title');
         const status = document.getElementById('status');
@@ -147,91 +143,28 @@
           targetMap.addSource('route128', { type: 'geojson', data: route, lineMetrics: true });
           const width = (a, b, c) => ['interpolate', ['linear'], ['zoom'], 8, a, 14, b, 17, c];
           const layers = [
-            ['route128-terrain-reflection', 110, 205, 285, 55, .58],
-            ['route128-blood-haze', 42, 92, 142, 44, .86],
-            ['route128-shadow', 30, 68, 108, 34, .9],
-            ['route128-glow-outer', 21, 50, 82, 24, .96],
-            ['route128-glow-inner', 10, 29, 48, 11, .98],
-            ['route128-hot-core', 5, 14, 24, 3, .98],
-            ['route128-core', 2.3, 7, 12, .45, 1]
+            ['route128-glow-outer', 12, 31, 52, 13, .72],
+            ['route128-glow-inner', 7, 19, 32, 5, .9],
+            ['route128-hot-core', 4, 11, 19, 1.2, .98],
+            ['route128-core', 2.2, 6.5, 11, .25, 1]
           ];
           for (const [id, w8, w14, w17, blur, opacity] of layers) targetMap.addLayer({ id, type: 'line', source: 'route128', paint: { 'line-width': width(w8, w14, w17), 'line-blur': blur, 'line-opacity': opacity, 'line-gradient': transparentGradient() } });
-          targetMap.addLayer({ id: 'route128-scan-wide', type: 'line', source: 'route128', paint: { 'line-width': width(22, 54, 86), 'line-blur': 20, 'line-opacity': 1, 'line-gradient': transparentGradient() } });
-          targetMap.addLayer({ id: 'route128-scan', type: 'line', source: 'route128', paint: { 'line-width': width(10, 26, 42), 'line-blur': 5, 'line-opacity': 1, 'line-gradient': transparentGradient() } });
         }
 
         async function loadRoute128() {
           status.textContent = 'Loading OSM relation via Vercel API...';
-          try {
-            const response = await fetch('/api/osm-route128', { cache: 'no-store' });
-            if (!response.ok) throw new Error(`API ${response.status}`);
-            const route = await response.json();
-            const feature = normalizeCameraFeature(route);
-            status.textContent = `OSM relation via API: ${route.metadata?.cameraPathKm || '?'} km`;
-            return { ...route, features: [feature] };
-          } catch (apiError) {
-            console.warn(apiError);
-            status.textContent = 'Vercel API failed. Loading OSM relation directly...';
-            const route = await fetchOrderedRelationRoute128FromBrowser();
-            const feature = normalizeCameraFeature(route);
-            status.textContent = `OSM relation direct: ${route.metadata?.cameraPathKm || '?'} km`;
-            return { ...route, features: [feature] };
-          }
-        }
-
-        async function fetchOrderedRelationRoute128FromBrowser() {
-          const query = `
-            [out:json][timeout:60];
-            rel(${RELATION_ID});
-            out body;
-            way(r);
-            out tags geom;
-          `;
-          const response = await fetch(OVERPASS_URL, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' }, body: new URLSearchParams({ data: query }) });
-          if (!response.ok) throw new Error(`Direct Overpass ${response.status}`);
-          const osm = await response.json();
-          return buildRouteFromOsm(osm);
-        }
-
-        function buildRouteFromOsm(osm) {
-          const relation = osm.elements.find((element) => element.type === 'relation' && element.id === RELATION_ID);
-          if (!relation || !Array.isArray(relation.members)) throw new Error(`OSM relation ${RELATION_ID} missing`);
-          const wayById = new Map(osm.elements.filter((element) => element.type === 'way' && Array.isArray(element.geometry) && element.geometry.length >= 2).map((way) => [way.id, way]));
-          const ordered = relation.members.filter((member) => member.type === 'way').map((member) => wayById.get(member.ref)).filter((way) => way && isUsableRoadWay(way));
-          if (!ordered.length) throw new Error('No usable OSM relation ways');
-          const chains = buildRelationChains(ordered).map((chain) => {
-            const coordinates = orientChibaToTateyama(deduplicate(chain.coordinates));
-            return { coordinates, lengthKm: pathLengthKm(coordinates), memberCount: chain.memberCount };
-          }).filter((chain) => chain.coordinates.length >= 2 && chain.lengthKm >= 2).sort((a, b) => scoreChain(b) - scoreChain(a));
-          if (!chains.length) throw new Error('No continuous OSM relation chain');
-          const camera = chains[0];
-          return { type: 'FeatureCollection', metadata: { source: 'browser Overpass ordered relation members', relationId: RELATION_ID, cameraPathKm: round(camera.lengthKm, 2), chainCount: chains.length }, features: [{ type: 'Feature', properties: { id: 'route128_main', role: 'camera-path', name: relation.tags?.name || '国道128号', ref: relation.tags?.ref || '128' }, geometry: { type: 'LineString', coordinates: camera.coordinates } }] };
+          const response = await fetch('/api/osm-route128', { cache: 'no-store' });
+          if (!response.ok) throw new Error(`API ${response.status}`);
+          const route = await response.json();
+          const feature = normalizeCameraFeature(route);
+          status.textContent = `OSM relation via API: ${route.metadata?.cameraPathKm || '?'} km / skipped ${route.metadata?.skippedParallelChains || 0}`;
+          return { ...route, features: [feature] };
         }
 
         function normalizeCameraFeature(route) {
           const feature = route.features?.find((item) => item.properties?.role === 'camera-path') || route.features?.[0];
           if (!feature?.geometry?.coordinates?.length) throw new Error('Route has no coordinates');
           return feature;
-        }
-
-        function buildRelationChains(ways) {
-          const chains = [];
-          let current = null;
-          for (const way of ways) {
-            const coords = way.geometry.map((point) => [point.lon, point.lat]);
-            if (!current) { current = { coordinates: coords, memberCount: 1 }; continue; }
-            const join = bestEndpointJoin(current.coordinates, coords);
-            if (join.distanceKm > MAX_GAP_KM) { chains.push(current); current = { coordinates: coords, memberCount: 1 }; continue; }
-            current.coordinates = applyJoin(current.coordinates, coords, join.mode);
-            current.memberCount += 1;
-          }
-          if (current) chains.push(current);
-          return chains;
-        }
-
-        function isUsableRoadWay(way) {
-          const highway = way.tags?.highway;
-          return Boolean(highway) && !['footway', 'cycleway', 'path', 'steps', 'pedestrian'].includes(highway);
         }
 
         async function followRouteCamera(map, duration) {
@@ -274,28 +207,12 @@
         function stopEnergyPulse() { if (state.energyFrame) cancelAnimationFrame(state.energyFrame); state.energyFrame = null; }
         function setReveal(map, progress, pulse) {
           const p = clamp(progress, 0, 1);
-          const bodyEnd = Math.max(0, p - .02);
-          const headStart = Math.max(0, p - .08);
-          const headEnd = Math.min(1, p + .035);
-          setGradient(map, 'route128-terrain-reflection', gradientFor('#ff1208', .24 + pulse * .18, p, .22));
-          setGradient(map, 'route128-blood-haze', gradientFor('#780000', .44 + pulse * .22, p, .16));
-          setGradient(map, 'route128-shadow', gradientFor('#b80000', .5 + pulse * .24, p, .14));
-          setGradient(map, 'route128-glow-outer', gradientFor('#ff0808', .62 + pulse * .28, p, .11));
-          setGradient(map, 'route128-glow-inner', gradientFor('#ff2a16', .72 + pulse * .24, p, .08));
-          setGradient(map, 'route128-hot-core', gradientFor('#ff6a38', .82 + pulse * .18, p, .05));
-          setGradient(map, 'route128-core', gradientFor('#fff0dc', .92, p, .025));
-          setGradient(map, 'route128-scan-wide', ['interpolate', ['linear'], ['line-progress'], 0, 'rgba(255, 12, 8, 0)', Math.max(0, bodyEnd - .2), 'rgba(255, 12, 8, 0)', headStart, 'rgba(255, 0, 0, .4)', p, 'rgba(255, 240, 210, 1)', headEnd, 'rgba(255, 30, 12, .18)', 1, 'rgba(255, 18, 12, 0)']);
-          setGradient(map, 'route128-scan', ['interpolate', ['linear'], ['line-progress'], 0, 'rgba(255, 18, 12, 0)', Math.max(0, bodyEnd - .1), 'rgba(255, 20, 14, 0)', headStart, 'rgba(255, 58, 26, .85)', p, 'rgba(255, 255, 236, 1)', headEnd, 'rgba(255, 46, 24, .34)', 1, 'rgba(255, 18, 12, 0)']);
+          setGradient(map, 'route128-glow-outer', gradientFor('#ff0808', .42 + pulse * .18, p, .08));
+          setGradient(map, 'route128-glow-inner', gradientFor('#ff2a16', .62 + pulse * .16, p, .055));
+          setGradient(map, 'route128-hot-core', gradientFor('#ff6a38', .82 + pulse * .12, p, .035));
+          setGradient(map, 'route128-core', gradientFor('#fff0dc', .94, p, .018));
         }
 
-        function bestEndpointJoin(a, b) { const candidates = [{ mode: 'append', distanceKm: distanceKm(a[a.length - 1], b[0]) }, { mode: 'appendReverse', distanceKm: distanceKm(a[a.length - 1], b[b.length - 1]) }, { mode: 'prepend', distanceKm: distanceKm(a[0], b[b.length - 1]) }, { mode: 'prependReverse', distanceKm: distanceKm(a[0], b[0]) }]; return candidates.sort((left, right) => left.distanceKm - right.distanceKm)[0]; }
-        function applyJoin(base, next, mode) { if (mode === 'append') return appendCoordinates(base, next); if (mode === 'appendReverse') return appendCoordinates(base, next.slice().reverse()); if (mode === 'prepend') return appendCoordinates(next, base); return appendCoordinates(next.slice().reverse(), base); }
-        function appendCoordinates(base, next) { const last = base[base.length - 1]; const first = next[0]; return distanceKm(last, first) < .003 ? base.concat(next.slice(1)) : base.concat(next); }
-        function orientChibaToTateyama(coords) { const first = coords[0]; const last = coords[coords.length - 1]; const normal = distanceKm(first, CHIBA_START) + distanceKm(last, TATEYAMA_END); const reversed = distanceKm(last, CHIBA_START) + distanceKm(first, TATEYAMA_END); return normal <= reversed ? coords : coords.slice().reverse(); }
-        function scoreChain(chain) { const first = chain.coordinates[0]; const last = chain.coordinates[chain.coordinates.length - 1]; const endpointScore = 220 - distanceKm(first, CHIBA_START) - distanceKm(last, TATEYAMA_END); return chain.lengthKm + endpointScore * .35 + chain.memberCount * .03; }
-        function deduplicate(coords) { const result = []; for (const coord of coords) { const last = result[result.length - 1]; if (!last || distanceKm(last, coord) > .003) result.push(coord); } return result; }
-        function pathLengthKm(coords) { let total = 0; for (let index = 0; index < coords.length - 1; index++) total += distanceKm(coords[index], coords[index + 1]); return total; }
-        function distanceKm(a, b) { const earthRadiusKm = 6371; const dLat = toRadians(b[1] - a[1]); const dLon = toRadians(b[0] - a[0]); const lat1 = toRadians(a[1]); const lat2 = toRadians(b[1]); const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2; return 2 * earthRadiusKm * Math.asin(Math.min(1, Math.sqrt(h))); }
         function gradientFor(color, opacity, progress, softness) { const rgba = hexToRgba(color, opacity); const dim = hexToRgba(color, opacity * .45); const p = clamp(progress, 0, 1); return ['interpolate', ['linear'], ['line-progress'], 0, rgba, Math.max(0, p - softness), dim, p, rgba, Math.min(1, p + .002), 'rgba(255, 0, 0, 0)', 1, 'rgba(255, 0, 0, 0)']; }
         function buildPath(coords) { const segments = []; let total = 0; for (let i = 0; i < coords.length - 1; i++) { const a = coords[i]; const b = coords[i + 1]; const length = distance(a, b); segments.push({ a, b, start: total, end: total + length, length }); total += length; } return { segments, total }; }
         function pointAt(path, progress) { const target = path.total * clamp(progress, 0, 1); const segment = path.segments.find((item) => target <= item.end) || path.segments[path.segments.length - 1]; const local = segment.length ? (target - segment.start) / segment.length : 0; return { coord: [lerp(segment.a[0], segment.b[0], local), lerp(segment.a[1], segment.b[1], local)] }; }
@@ -313,8 +230,6 @@
         function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
         function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
         function lerp(a, b, t) { return a + (b - a) * t; }
-        function round(value, decimals) { const factor = 10 ** decimals; return Math.round(value * factor) / factor; }
-        function toRadians(value) { return value * Math.PI / 180; }
         function easeInOutCubic(t) { return t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
         function easeInOutSine(t) { return -(Math.cos(Math.PI * t) - 1) / 2; }
       }());
