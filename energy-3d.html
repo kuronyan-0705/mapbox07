@@ -81,7 +81,11 @@
           await wait(700);
           map.easeTo({ center: start, zoom: 12.85, pitch: 75, bearing: 320, duration: 2500, easing: easeInOutCubic, essential: true });
           await once(map, 'moveend');
+          stopEnergyPulse();
+          setFlow(map, 0, .96);
           await followRouteCamera(map, 8200);
+          setFlow(map, 1, 1);
+          startEnergyFlow(map, .92);
           await smoothOutro(map);
           titleCard.classList.add('visible');
         }
@@ -180,6 +184,8 @@
               state.smoothedBearing = smoothBearing(state.smoothedBearing, targetBearing, .085);
               const zoom = 13.05 + Math.sin(Math.PI * eased) * .72;
               const pitch = 74 - Math.max(0, eased - .88) * 44;
+              const pulse = .88 + Math.pow(Math.sin(progress * Math.PI * 9), 8) * .16;
+              setFlow(map, eased, pulse);
               map.jumpTo({ center: point.coord, zoom, pitch, bearing: state.smoothedBearing });
               if (progress < 1) requestAnimationFrame(frame); else resolve();
             };
@@ -187,9 +193,9 @@
           });
         }
 
-        function startEnergyFlow(map) {
+        function startEnergyFlow(map, offset = 0) {
           stopEnergyPulse();
-          const started = performance.now();
+          const started = performance.now() - offset * 2450;
           const step = (now) => {
             const progress = ((now - started) / 2450) % 1;
             const pulse = .8 + Math.pow(Math.sin((now - started) / 1000 * 6.8), 8) * .2;
