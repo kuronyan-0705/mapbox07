@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ブラウザ録画ダウンロード</title>
+    <style>
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #000; color: #fff1ec; font-family: system-ui, "Yu Gothic", Meiryo, sans-serif; }
+      iframe { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #000; opacity: 0; transition: opacity 600ms ease; }
+      body.playing iframe { opacity: 1; }
+      #overlay { position: fixed; inset: 0; z-index: 3; display: grid; place-items: center; background: radial-gradient(circle at 50% 35%, #20272b 0, #030405 62%); }
+      body.playing #overlay { opacity: 0; pointer-events: none; transition: opacity 500ms ease; }
+      #panel { width: min(620px, calc(100vw - 36px)); padding: 26px; border: 1px solid rgba(255, 66, 44, .44); border-radius: 8px; background: rgba(6, 8, 10, .94); box-shadow: 0 0 60px rgba(255, 36, 22, .2); }
+      h1 { margin: 0 0 10px; font-size: clamp(24px, 4vw, 44px); letter-spacing: 0; }
+      p { margin: 8px 0; color: #d6c2bb; line-height: 1.7; }
+      button, a { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; margin-top: 14px; padding: 10px 16px; border-radius: 6px; border: 1px solid #6d2d24; background: linear-gradient(180deg, #ff4a2e, #bd2a1f); color: white; font: 800 14px/1 system-ui, sans-serif; text-decoration: none; cursor: pointer; }
+      button:disabled { opacity: .55; cursor: wait; }
+      #status { margin-top: 12px; color: #ffcfbf; font-weight: 700; }
+      #stageMask { position: fixed; right: 18px; top: 16px; z-index: 2; display: none; padding: 8px 10px; border: 1px solid rgba(255, 66, 44, .35); background: rgba(0,0,0,.55); color: #ffe7df; font: 12px/1.4 system-ui, sans-serif; }
+      body.playing #stageMask { display: block; opacity: .25; }
+    </style>
+  </head>
+  <body>
+    <iframe id="stage" src="./energy-3d.html?record=1" allow="fullscreen; display-capture"></iframe>
+    <div id="stageMask">Recording...</div>
+    <div id="overlay">
+      <div id="panel">
+        <h1>ブラウザ録画</h1>
+        <p>OBSを使わず、このブラウザだけで録画してWebM動画としてダウンロードします。</p>
+        <p>開始後にブラウザの共有確認が出たら、このタブまたはこのウィンドウを選んでください。</p>
+        <button id="start">録画を開始してダウンロード</button>
+        <p id="status"></p>
+      </div>
+    </div>
+
+    <script>
+      const stage = document.getElementById('stage');
+      const startButton = document.getElementById('start');
+      const statusText = document.getElementById('status');
+      const STORAGE_KEY = 'routeDirectorPreset';
+      let stageLoaded = false;
+
+      stage.addEventListener('load', () => {
+        stageLoaded = true;
+        hideStageUi();
+      });
+
+      startButton.addEventListener('click', startCapture);
+
+      async function startCapture() {
+        startButton.disabled = true;
+        statusText.textContent = '共有するタブまたはウィンドウを選んでください。';
+
+        try {
+          const stream = await navigator.mediaDevices.getDisplayMedia({
+            video: { frameRate: 60, width: 1920, height: 1080 },
+            audio: false,
+            preferCurrentTab: true
+          });
+          const chunks = [];
+          const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
+          const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 12000000 });
+          recorder.addEventListener('dataavailable', (event) => { if (event.data.size) chunks.push(event.data); });
+          recorder.addEventListener('stop', () => downloadRecording(chunks, mimeType));
+
+          statusText.textContent = '録画を開始します。画面が切り替わります。';
+          await waitUntilReady();
+          hideStageUi();
+          document.body.classList.add('playing');
+          await wait(850);
+
+          recorder.start(1000);
+          restartFilm();
+          const duration = estimateDurationMs() + 1600;
+          setTimeout(() => {
+            if (recorder.state === 'recording') recorder.stop();
+            stream.getTracks().forEach((track) => track.stop());
+          }, duration);
+        } catch (error) {
+          startButton.disabled = false;
+          statusText.textContent = `録画を開始できませんでした: ${error.message}`;
+        }
+      }
+
+      function downloadRecording(chunks, mimeType) {
+        const blob = new Blob(chunks, { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `route-director-${new Date().toISOString().replace(/[:.]/g, '-')}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        document.body.classList.remove('playing');
+        startButton.disabled = false;
+        statusText.textContent = '録画ファイルをダウンロードしました。';
+      }
+
+      function restartFilm() {
+        try {
+          hideStageUi();
+          stage.contentWindow.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', code: 'KeyR', bubbles: true }));
+        } catch (error) {}
+      }
+
+      function hideStageUi() {
+        try {
+          const doc = stage.contentDocument;
+          if (!doc) return;
+          const status = doc.getElementById('status');
+          if (status) status.style.display = 'none';
+          doc.body.style.cursor = 'none';
+        } catch (error) {}
+      }
+
+      async function waitUntilReady() {
+        while (!stageLoaded) await wait(120);
+        await wait(3000);
+      }
+
+      function estimateDurationMs() {
+        let preset = {};
+        try { preset = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch (error) {}
+        const follow = finiteNumber(preset.followDuration, 8200);
+        const outro = finiteNumber(preset.outroDuration, 6500);
+        return 700 + 2500 + follow + outro + 2200;
+      }
+
+      function finiteNumber(value, fallback) {
+        const number = Number(value);
+        return Number.isFinite(number) ? number : fallback;
+      }
+
+      function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+    </script>
+  </body>
+</html>
