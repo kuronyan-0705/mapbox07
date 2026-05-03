@@ -57,7 +57,7 @@ export default async function handler(request, response) {
 }
 
 function routeResponse({ routeNumber, relationId, relationLabel, termini, bounds, sourceStatus }) {
-  const cleanTermini = mergeCandidates(termini, []);
+  const cleanTermini = labelCandidates(mergeCandidates(termini, []), routeNumber);
   const first = cleanTermini[0];
   const second = cleanTermini[1];
   return {
@@ -84,9 +84,6 @@ async function lookupWikidataRoute(routeNumber) {
   const termini = Object.values(endpointEntities.entities || {})
     .map((entity) => candidateFromEntity(entity, 'Wikidata terminus'))
     .filter(Boolean);
-
-  const point = readCoordinateClaim(route, 'P625');
-  if (point) termini.push({ label: `${labelOf(route)} 周辺`, lngLat: point, source: 'Wikidata route coordinate', confidence: 'low' });
 
   return { relationId, label: labelOf(route), termini };
 }
@@ -137,11 +134,17 @@ async function reverseGeocode([lng, lat]) {
     'accept-language': 'ja'
   }));
   const address = data.address || {};
-  const road = address.road || address.neighbourhood || address.suburb || address.quarter;
-  const city = address.city || address.town || address.village || address.municipality || address.county;
   const state = address.state || address.province;
-  const parts = [state, city, road].filter(Boolean);
-  return parts.length ? `${parts.join(' ')} 付近` : (data.name || data.display_name || '地名未取得');
+  const city = address.city || address.town || address.village || address.municipality || address.county;
+  const district = address.city_district || address.suburb || address.quarter || address.neighbourhood || address.hamlet;
+  const road = address.road;
+  const name = data.name && data.name !== road ? data.name : null;
+  const parts = [state, city, district, name, road].filter(Boolean);
+  const compact = dedupeStrings(parts).slice(0, 4);
+  if (compact.length >= 2) return `${compact.join(' ')} 付近`;
+  const displayParts = String(data.display_name || '').split(',').map((part) => part.trim()).filter(Boolean);
+  if (displayParts.length) return `${displayParts.slice(0, 4).reverse().join(' ')} 付近`;
+  return '地名未取得';
 }
 
 async function searchRouteEntities(routeNumber) {
@@ -277,7 +280,7 @@ function farthestKeyFrom(graph, fromKey, keys) {
   const from = graph.coords.get(fromKey);
   let bestKey = fromKey;
   let bestDistance = -Infinity;
-  for (const key of keys.slice(0, 500)) {
+  for (const key of keys) {
     const distance = distanceKm(from, graph.coords.get(key));
     if (distance > bestDistance) {
       bestDistance = distance;
@@ -303,6 +306,30 @@ function mergeCandidates(primary = [], secondary = []) {
     result.push(candidate);
   }
   return result;
+}
+
+function labelCandidates(candidates, routeNumber) {
+  return candidates.map((candidate, index) => {
+    const letter = String.fromCharCode(65 + index);
+    const label = isVagueLabel(candidate.label, routeNumber) ? `推定端点${letter}（地名取得不足）` : candidate.label;
+    return { ...candidate, label: `候補${letter}: ${label}` };
+  });
+}
+
+function isVagueLabel(label, routeNumber) {
+  const text = String(label || '').trim();
+  if (!text) return true;
+  return text === `国道${routeNumber}号` || text === `国道${routeNumber}号 周辺` || text === `Route ${routeNumber}` || text.length <= 4;
+}
+
+function dedupeStrings(values) {
+  const seen = new Set();
+  return values.filter((value) => {
+    const key = String(value).trim();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function boundsFromCandidates(candidates) {
