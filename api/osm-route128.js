@@ -92,7 +92,57 @@ async function lookupRelationId(routeNumber) {
       errors.push(`${url}: ${error.message}`);
     }
   }
+
+  try {
+    return await lookupRelationIdFromWikidata(ref);
+  } catch (error) {
+    errors.push(`Wikidata: ${error.message}`);
+  }
+
   throw new Error(errors.join(' | '));
+}
+
+async function lookupRelationIdFromWikidata(ref) {
+  const sparql = `
+    SELECT ?item ?itemLabel ?osm WHERE {
+      ?item wdt:P402 ?osm.
+      {
+        ?item wdt:P1824 "${ref}".
+      }
+      UNION
+      {
+        ?item rdfs:label ?routeLabel.
+        FILTER(LANG(?routeLabel) IN ("ja", "en"))
+        FILTER(CONTAINS(STR(?routeLabel), "国道${ref}号") || CONTAINS(LCASE(STR(?routeLabel)), "national route ${ref}"))
+      }
+      SERVICE wikibase:label { bd:serviceParam wikibase:language "ja,en". }
+    }
+    LIMIT 20
+  `;
+  const data = await fetchWikidataSparql(sparql);
+  const bindings = data.results?.bindings || [];
+  const preferred = bindings.find(({ itemLabel }) => {
+    const label = itemLabel?.value || '';
+    return label.includes(`国道${ref}号`) || label.toLowerCase().includes(`national route ${ref}`);
+  }) || bindings[0];
+  const relationId = Number(preferred?.osm?.value);
+  if (!Number.isFinite(relationId) || relationId <= 0) throw new Error(`国道${ref}号のOSM relation IDを取得できません`);
+  return relationId;
+}
+
+async function fetchWikidataSparql(sparql) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetch(`https://query.wikidata.org/sparql?${new URLSearchParams({ query: sparql, format: 'json' })}`, {
+      headers: { accept: 'application/sparql-results+json', 'user-agent': 'mapbox07-route-director/1.0' },
+      signal: controller.signal
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function fetchOsmFullJson(url) {
