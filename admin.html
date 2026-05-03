@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>国道演出 管理画面</title>
     <style>
-      :root { color-scheme: dark; --bg: #10161a; --panel: #182126; --line: #314047; --text: #f2f5f4; --muted: #a9b6b6; --accent: #ff3b24; }
+      :root { color-scheme: dark; --panel: #182126; --line: #314047; --text: #f2f5f4; --muted: #a9b6b6; }
       * { box-sizing: border-box; }
       body { margin: 0; background: radial-gradient(circle at 18% 0%, #25323a 0, #10161a 42%, #090d10 100%); color: var(--text); font: 14px/1.6 system-ui, -apple-system, BlinkMacSystemFont, "Yu Gothic", Meiryo, sans-serif; }
       main { width: min(1180px, calc(100vw - 32px)); margin: 0 auto; padding: 28px 0 40px; }
@@ -23,6 +23,7 @@
       .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
       button, a.button { appearance: none; border: 1px solid #5a2b25; border-radius: 6px; background: linear-gradient(180deg, #ff4a2e, #be281c); color: white; min-height: 42px; padding: 9px 14px; font: 800 14px/1 system-ui, sans-serif; text-decoration: none; cursor: pointer; }
       button.secondary, a.secondary { background: #121a1f; border-color: #405158; color: #dce4e2; }
+      button.record { background: linear-gradient(180deg, #ffcf6e, #c35b15); border-color: #7a3c16; color: #160b05; }
       #message { color: #ffd9cf; min-height: 24px; }
       pre { margin: 0; padding: 14px; max-height: 280px; overflow: auto; border: 1px solid #34454c; border-radius: 6px; background: #0b1114; color: #cfe4e4; white-space: pre-wrap; }
       @media (max-width: 760px) { section { grid-column: 1 / -1; } header { display: block; } .row { grid-template-columns: 1fr; } }
@@ -37,6 +38,7 @@
         </div>
         <div class="actions">
           <a class="button secondary" href="./energy-3d.html" target="_blank" rel="noreferrer">現在の映像を開く</a>
+          <a class="button secondary" href="./record.html" target="_blank" rel="noreferrer">録画ページを開く</a>
         </div>
       </header>
 
@@ -93,6 +95,7 @@
           <div class="actions">
             <button type="button" id="save">保存</button>
             <button type="button" id="preview">保存してプレビュー</button>
+            <button type="button" id="record" class="record">保存して録画モード</button>
             <button type="button" id="test" class="secondary">OSM取得テスト</button>
             <button type="button" id="reset" class="secondary">128号に戻す</button>
           </div>
@@ -117,20 +120,10 @@
       render();
 
       form.addEventListener('input', render);
-      document.getElementById('save').addEventListener('click', () => {
-        save();
-        message.textContent = '保存しました。energy-3d.htmlを開くとこの設定で再生されます。';
-      });
-      document.getElementById('preview').addEventListener('click', () => {
-        save();
-        window.open('./energy-3d.html', '_blank', 'noreferrer');
-      });
-      document.getElementById('reset').addEventListener('click', () => {
-        localStorage.removeItem(STORAGE_KEY);
-        writeForm(defaults);
-        save();
-        message.textContent = '国道128号の基準設定に戻しました。';
-      });
+      document.getElementById('save').addEventListener('click', () => { save(); message.textContent = '保存しました。energy-3d.htmlを開くとこの設定で再生されます。'; });
+      document.getElementById('preview').addEventListener('click', () => { save(); window.open('./energy-3d.html', '_blank', 'noreferrer'); });
+      document.getElementById('record').addEventListener('click', () => { save(); window.open('./record.html', '_blank', 'noreferrer'); });
+      document.getElementById('reset').addEventListener('click', () => { localStorage.removeItem(STORAGE_KEY); writeForm(defaults); save(); message.textContent = '国道128号の基準設定に戻しました。'; });
       document.getElementById('test').addEventListener('click', async () => {
         save();
         const preset = readForm();
@@ -147,23 +140,9 @@
         }
       });
 
-      function save() {
-        const preset = readForm();
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(preset));
-        render();
-      }
-
-      function loadSaved() {
-        try {
-          const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-          if (Object.keys(saved).length) writeForm(saved);
-        } catch (error) {}
-      }
-
-      function render() {
-        output.textContent = JSON.stringify(readForm(), null, 2);
-      }
-
+      function save() { const preset = readForm(); localStorage.setItem(STORAGE_KEY, JSON.stringify(preset)); render(); }
+      function loadSaved() { try { const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); if (Object.keys(saved).length) writeForm(saved); } catch (error) {} }
+      function render() { output.textContent = JSON.stringify(readForm(), null, 2); }
       function readForm() {
         const data = new FormData(form);
         const get = (name) => String(data.get(name) || '').trim();
@@ -178,25 +157,9 @@
           guideOpacity: num('guideOpacity'), glowScale: num('glowScale'), reflectionScale: num('reflectionScale')
         };
       }
-
-      function writeForm(values) {
-        for (const [key, value] of Object.entries(values)) {
-          const field = form.elements[key];
-          if (!field) continue;
-          field.value = Array.isArray(value) ? value.join(',') : value;
-        }
-        render();
-      }
-
-      function coord(value) {
-        const parts = String(value).split(',').map((item) => Number(item.trim()));
-        return parts.length === 2 && parts.every(Number.isFinite) ? parts : [0, 0];
-      }
-
-      function bounds(value) {
-        const parts = String(value).split(',').map((item) => Number(item.trim()));
-        return parts.length === 4 && parts.every(Number.isFinite) ? parts : [0, 0, 0, 0];
-      }
+      function writeForm(values) { for (const [key, value] of Object.entries(values)) { const field = form.elements[key]; if (!field) continue; field.value = Array.isArray(value) ? value.join(',') : value; } render(); }
+      function coord(value) { const parts = String(value).split(',').map((item) => Number(item.trim())); return parts.length === 2 && parts.every(Number.isFinite) ? parts : [0, 0]; }
+      function bounds(value) { const parts = String(value).split(',').map((item) => Number(item.trim())); return parts.length === 4 && parts.every(Number.isFinite) ? parts : [0, 0, 0, 0]; }
     </script>
   </body>
 </html>
