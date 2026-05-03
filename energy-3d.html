@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Route 128 3D Energy Director</title>
+    <title>国道128号線のミステリー</title>
     <link href="https://api.mapbox.com/mapbox-gl-js/v3.11.0/mapbox-gl.css" rel="stylesheet">
     <style>
       html, body, #map { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #182026; }
@@ -24,7 +24,7 @@
     <div id="vignette"></div>
     <section id="title-card" aria-live="polite">
       <p id="scene-kicker">Route 128 / 3D Terrain</p>
-      <h1 id="scene-title">地形に走る赤い痕跡</h1>
+      <h1 id="scene-title">国道128号線のミステリー</h1>
     </section>
     <div id="status">Mapbox token required</div>
     <script src="https://api.mapbox.com/mapbox-gl-js/v3.11.0/mapbox-gl.js"></script>
@@ -39,7 +39,6 @@
 
         if (!token) status.textContent = 'Set MAPBOX_TOKEN in Vercel';
         mapboxgl.accessToken = token;
-
         const map = new mapboxgl.Map({ container: 'map', style: 'mapbox://styles/mapbox/dark-v11', center: [140.22, 35.31], zoom: 8.55, pitch: 0, bearing: -35, antialias: true, attributionControl: false, logoPosition: 'bottom-left' });
         map.dragRotate.disable();
         map.touchZoomRotate.disableRotation();
@@ -67,13 +66,13 @@
           const start = state.routeCoords[0] || [140.12462, 35.61059];
           state.sceneIndex = 0;
           state.smoothedBearing = 205;
-          sceneTitle.textContent = '国道128号線：地形を走る赤い痕跡';
+          sceneTitle.textContent = '国道128号線のミステリー';
           map.jumpTo({ center: start, zoom: 12.55, pitch: 74, bearing: 205 });
           setReveal(0, 0);
           await wait(700);
           map.easeTo({ center: start, zoom: 12.85, pitch: 75, bearing: 320, duration: 2500, easing: easeInOutCubic, essential: true });
           await once(map, 'moveend');
-          resetReveal(8200);
+          resetReveal(7000);
           runEnergyPulse();
           await followRouteCamera(8200);
           await wait(250);
@@ -90,7 +89,7 @@
           sceneTitle.textContent = scene.title;
           status.textContent = `${index + 1}/${scenes.length}: ${scene.title}`;
           titleCard.classList.remove('visible');
-          resetReveal(scene.duration || 9000);
+          resetReveal((scene.duration || 9000) * .82);
           runEnergyPulse();
           map.flyTo({ center: scene.lngLat, zoom: Math.max(scene.zoom, 12.4), pitch: Math.max(scene.pitch || 73, 73), bearing: scene.bearing + 14, duration: options.instant ? 0 : scene.duration, curve: 1.42, speed: .48, essential: true });
           await once(map, 'moveend');
@@ -126,7 +125,7 @@
 
         function add3DBuildings(targetMap) {
           const labelLayer = (targetMap.getStyle().layers || []).find((layer) => layer.type === 'symbol' && layer.layout && layer.layout['text-field']);
-          targetMap.addLayer({ id: '3d-buildings-cinematic', source: 'composite', 'source-layer': 'building', filter: ['==', ['get', 'extrude'], 'true'], type: 'fill-extrusion', minzoom: 14, paint: { 'fill-extrusion-color': ['interpolate', ['linear'], ['zoom'], 14, '#343b41', 17, '#5c6870'], 'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'height']], 'fill-extrusion-base': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'min_height']], 'fill-extrusion-opacity': .78, 'fill-extrusion-vertical-gradient': true } }, labelLayer && labelLayer.id);
+          targetMap.addLayer({ id: '3d-buildings-cinematic', source: 'composite', 'source-layer': 'building', filter: ['==', ['get', 'extrude'], 'true'], type: 'fill-extrusion', minzoom: 14, paint: { 'fill-extrusion-color': ['interpolate', ['linear'], ['zoom'], 14, '#3f2527', 17, '#6d3838'], 'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'height']], 'fill-extrusion-base': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'min_height']], 'fill-extrusion-opacity': .82, 'fill-extrusion-vertical-gradient': true } }, labelLayer && labelLayer.id);
         }
 
         async function addEnergyRoute(targetMap) {
@@ -135,11 +134,9 @@
           targetMap.addSource('route128', { type: 'geojson', data: route, lineMetrics: true });
           const width = (a, b, c) => ['interpolate', ['linear'], ['zoom'], 8, a, 14, b, 17, c];
           const layers = [
-            ['route128-terrain-reflection', 190, 355, 500, 82, .92],
-            ['route128-reflection-mid', 145, 265, 380, 62, .82],
-            ['route128-reflection-hot', 98, 190, 275, 48, .78],
-            ['route128-blood-haze', 44, 96, 148, 44, .86],
-            ['route128-shadow', 31, 70, 110, 34, .9],
+            ['route128-terrain-reflection', 110, 205, 285, 55, .58],
+            ['route128-blood-haze', 42, 92, 142, 44, .86],
+            ['route128-shadow', 30, 68, 108, 34, .9],
             ['route128-glow-outer', 21, 50, 82, 24, .96],
             ['route128-glow-inner', 10, 29, 48, 11, .98],
             ['route128-hot-core', 5, 14, 24, 3, .98],
@@ -171,16 +168,14 @@
         }
 
         function resetReveal(duration) { state.revealStart = performance.now(); state.revealDuration = duration || 12000; setReveal(0, 0); }
-        function runEnergyPulse() { if (state.energyFrame) cancelAnimationFrame(state.energyFrame); const step = (now) => { const elapsed = now - state.revealStart; const reveal = Math.min(1, elapsed / state.revealDuration); const pulse = .72 + Math.pow(Math.sin(elapsed / 1000 * 6.2), 8) * .28; setReveal(reveal, pulse); state.energyFrame = requestAnimationFrame(step); }; state.energyFrame = requestAnimationFrame(step); }
+        function runEnergyPulse() { if (state.energyFrame) cancelAnimationFrame(state.energyFrame); const step = (now) => { const elapsed = now - state.revealStart; const reveal = Math.min(1, elapsed / state.revealDuration + .08); const pulse = .72 + Math.pow(Math.sin(elapsed / 1000 * 6.2), 8) * .28; setReveal(reveal, pulse); state.energyFrame = requestAnimationFrame(step); }; state.energyFrame = requestAnimationFrame(step); }
 
         function setReveal(progress, pulse) {
           const p = clamp(progress, 0, 1);
           const bodyEnd = Math.max(0, p - .02);
           const headStart = Math.max(0, p - .08);
           const headEnd = Math.min(1, p + .035);
-          setGradient('route128-terrain-reflection', gradientFor('#ff1208', .46 + pulse * .34, p, .3));
-          setGradient('route128-reflection-mid', gradientFor('#ff180b', .34 + pulse * .28, p, .25));
-          setGradient('route128-reflection-hot', gradientFor('#ff2a16', .3 + pulse * .24, p, .2));
+          setGradient('route128-terrain-reflection', gradientFor('#ff1208', .24 + pulse * .18, p, .22));
           setGradient('route128-blood-haze', gradientFor('#780000', .44 + pulse * .22, p, .16));
           setGradient('route128-shadow', gradientFor('#b80000', .5 + pulse * .24, p, .14));
           setGradient('route128-glow-outer', gradientFor('#ff0808', .62 + pulse * .28, p, .11));
