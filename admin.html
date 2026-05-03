@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>国道演出 管理画面</title>
+    <style>
+      :root { color-scheme: dark; --bg: #10161a; --panel: #182126; --line: #314047; --text: #f2f5f4; --muted: #a9b6b6; --accent: #ff3b24; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: radial-gradient(circle at 18% 0%, #25323a 0, #10161a 42%, #090d10 100%); color: var(--text); font: 14px/1.6 system-ui, -apple-system, BlinkMacSystemFont, "Yu Gothic", Meiryo, sans-serif; }
+      main { width: min(1180px, calc(100vw - 32px)); margin: 0 auto; padding: 28px 0 40px; }
+      header { display: flex; justify-content: space-between; gap: 16px; align-items: end; margin-bottom: 20px; }
+      h1 { margin: 0; font-size: clamp(24px, 3vw, 40px); line-height: 1.2; letter-spacing: 0; }
+      p { margin: 6px 0 0; color: var(--muted); }
+      .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; }
+      section { grid-column: span 6; background: rgba(24, 33, 38, .92); border: 1px solid var(--line); border-radius: 8px; padding: 18px; box-shadow: 0 20px 60px rgba(0,0,0,.28); }
+      .wide { grid-column: 1 / -1; }
+      h2 { margin: 0 0 14px; font-size: 16px; }
+      label { display: grid; gap: 6px; margin: 0 0 12px; color: #dce4e2; font-weight: 700; }
+      input { width: 100%; min-height: 40px; border: 1px solid #405158; border-radius: 6px; background: #0d1417; color: var(--text); padding: 8px 10px; font: inherit; }
+      input[type="color"] { padding: 3px; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+      button, a.button { appearance: none; border: 1px solid #5a2b25; border-radius: 6px; background: linear-gradient(180deg, #ff4a2e, #be281c); color: white; min-height: 42px; padding: 9px 14px; font: 800 14px/1 system-ui, sans-serif; text-decoration: none; cursor: pointer; }
+      button.secondary, a.secondary { background: #121a1f; border-color: #405158; color: #dce4e2; }
+      #message { color: #ffd9cf; min-height: 24px; }
+      pre { margin: 0; padding: 14px; max-height: 280px; overflow: auto; border: 1px solid #34454c; border-radius: 6px; background: #0b1114; color: #cfe4e4; white-space: pre-wrap; }
+      @media (max-width: 760px) { section { grid-column: 1 / -1; } header { display: block; } .row { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>国道演出 管理画面</h1>
+          <p>国道128号の基準版をもとに、別の国道や演出値を設定できます。</p>
+        </div>
+        <div class="actions">
+          <a class="button secondary" href="./energy-3d.html" target="_blank" rel="noreferrer">現在の映像を開く</a>
+        </div>
+      </header>
+
+      <form id="form" class="grid">
+        <section>
+          <h2>国道データ</h2>
+          <div class="row">
+            <label>国道番号<input name="routeNumber" value="128"></label>
+            <label>OSMリレーションID<input name="relationId" value="9069158"></label>
+          </div>
+          <label>開始地点 lng,lat<input name="start" value="140.12462,35.61059"></label>
+          <label>終了地点 lng,lat<input name="end" value="139.86315,34.99318"></label>
+          <label>取得範囲 west,south,east,north<input name="bounds" value="139.72,34.86,140.62,35.72"></label>
+        </section>
+
+        <section>
+          <h2>タイトル</h2>
+          <label>タイトル<input name="title" value="国道128号線のミステリー"></label>
+          <label>小見出し<input name="kicker" value="Route 128 / OpenStreetMap"></label>
+          <label>赤線カラー<input name="red" type="color" value="#ff1208"></label>
+        </section>
+
+        <section>
+          <h2>カメラ</h2>
+          <div class="row">
+            <label>開始ズーム<input name="introZoom" type="number" step="0.05" value="12.55"></label>
+            <label>追従ズーム<input name="followZoom" type="number" step="0.05" value="13.05"></label>
+          </div>
+          <div class="row">
+            <label>ピッチ<input name="pitch" type="number" step="1" value="74"></label>
+            <label>地形立体感<input name="terrain" type="number" step="0.05" value="2.05"></label>
+          </div>
+          <div class="row">
+            <label>追従時間 ms<input name="followDuration" type="number" step="100" value="8200"></label>
+            <label>俯瞰時間 ms<input name="outroDuration" type="number" step="100" value="6500"></label>
+          </div>
+        </section>
+
+        <section>
+          <h2>構図と発光</h2>
+          <label>初期中心 lng,lat<input name="mapCenter" value="140.22,35.31"></label>
+          <label>ラスト俯瞰中心 lng,lat<input name="outroCenter" value="140.08,35.29"></label>
+          <div class="row">
+            <label>ラストズーム<input name="outroZoom" type="number" step="0.05" value="8.9"></label>
+            <label>灰色線の濃さ<input name="guideOpacity" type="number" step="0.05" value="0.72"></label>
+          </div>
+          <div class="row">
+            <label>赤線発光<input name="glowScale" type="number" step="0.05" value="1"></label>
+            <label>地形反射<input name="reflectionScale" type="number" step="0.05" value="1"></label>
+          </div>
+        </section>
+
+        <section class="wide">
+          <div class="actions">
+            <button type="button" id="save">保存</button>
+            <button type="button" id="preview">保存してプレビュー</button>
+            <button type="button" id="test" class="secondary">OSM取得テスト</button>
+            <button type="button" id="reset" class="secondary">128号に戻す</button>
+          </div>
+          <p id="message"></p>
+        </section>
+
+        <section class="wide">
+          <h2>現在の設定</h2>
+          <pre id="output"></pre>
+        </section>
+      </form>
+    </main>
+
+    <script>
+      const STORAGE_KEY = 'routeDirectorPreset';
+      const form = document.getElementById('form');
+      const output = document.getElementById('output');
+      const message = document.getElementById('message');
+      const defaults = readForm();
+
+      loadSaved();
+      render();
+
+      form.addEventListener('input', render);
+      document.getElementById('save').addEventListener('click', () => {
+        save();
+        message.textContent = '保存しました。energy-3d.htmlを開くとこの設定で再生されます。';
+      });
+      document.getElementById('preview').addEventListener('click', () => {
+        save();
+        window.open('./energy-3d.html', '_blank', 'noreferrer');
+      });
+      document.getElementById('reset').addEventListener('click', () => {
+        localStorage.removeItem(STORAGE_KEY);
+        writeForm(defaults);
+        save();
+        message.textContent = '国道128号の基準設定に戻しました。';
+      });
+      document.getElementById('test').addEventListener('click', async () => {
+        save();
+        const preset = readForm();
+        const params = new URLSearchParams({ relationId: preset.relationId, routeNumber: preset.routeNumber, start: preset.start.join(','), end: preset.end.join(','), bounds: preset.bounds.join(',') });
+        message.textContent = 'OSMからルートを取得しています...';
+        try {
+          const response = await fetch(`/api/osm-route128?${params}`, { cache: 'no-store' });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.detail || `API ${response.status}`);
+          message.textContent = `取得成功: 約${data.metadata.cameraPathKm}km / relation ${data.metadata.relationId}`;
+          output.textContent = JSON.stringify({ settings: preset, route: data.metadata }, null, 2);
+        } catch (error) {
+          message.textContent = `取得失敗: ${error.message}`;
+        }
+      });
+
+      function save() {
+        const preset = readForm();
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(preset));
+        render();
+      }
+
+      function loadSaved() {
+        try {
+          const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+          if (Object.keys(saved).length) writeForm(saved);
+        } catch (error) {}
+      }
+
+      function render() {
+        output.textContent = JSON.stringify(readForm(), null, 2);
+      }
+
+      function readForm() {
+        const data = new FormData(form);
+        const get = (name) => String(data.get(name) || '').trim();
+        const num = (name) => Number(get(name));
+        return {
+          routeNumber: get('routeNumber'), relationId: get('relationId'),
+          start: coord(get('start')), end: coord(get('end')), bounds: bounds(get('bounds')),
+          title: get('title'), kicker: get('kicker'), red: get('red'),
+          introZoom: num('introZoom'), followZoom: num('followZoom'), outroZoom: num('outroZoom'),
+          pitch: num('pitch'), terrain: num('terrain'), followDuration: num('followDuration'), outroDuration: num('outroDuration'),
+          mapCenter: coord(get('mapCenter')), outroCenter: coord(get('outroCenter')),
+          guideOpacity: num('guideOpacity'), glowScale: num('glowScale'), reflectionScale: num('reflectionScale')
+        };
+      }
+
+      function writeForm(values) {
+        for (const [key, value] of Object.entries(values)) {
+          const field = form.elements[key];
+          if (!field) continue;
+          field.value = Array.isArray(value) ? value.join(',') : value;
+        }
+        render();
+      }
+
+      function coord(value) {
+        const parts = String(value).split(',').map((item) => Number(item.trim()));
+        return parts.length === 2 && parts.every(Number.isFinite) ? parts : [0, 0];
+      }
+
+      function bounds(value) {
+        const parts = String(value).split(',').map((item) => Number(item.trim()));
+        return parts.length === 4 && parts.every(Number.isFinite) ? parts : [0, 0, 0, 0];
+      }
+    </script>
+  </body>
+</html>
