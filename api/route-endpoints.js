@@ -21,11 +21,24 @@ export default async function handler(request, response) {
   }
 
   try {
-    const verified = VERIFIED_ENDPOINTS[routeNumber] || { start: [], end: [], bounds: null };
-    const wikidata = await lookupWikidataRoute(routeNumber).catch((error) => ({ error: error.message, relationId: null, start: [], end: [] }));
-    const start = mergeCandidates(verified.start, wikidata.start);
-    const end = mergeCandidates(verified.end, wikidata.end);
-    const bounds = verified.bounds || boundsFromCandidates([...start, ...end]);
+    const verified = VERIFIED_ENDPOINTS[routeNumber];
+    if (verified) {
+      response.status(200).json({
+        routeNumber,
+        relationId: null,
+        relationLabel: `国道${routeNumber}号`,
+        start: verified.start,
+        end: verified.end,
+        bounds: verified.bounds,
+        sourceStatus: { verified: true, wikidataError: null }
+      });
+      return;
+    }
+
+    const wikidata = await lookupWikidataRoute(routeNumber);
+    const start = mergeCandidates([], wikidata.start);
+    const end = mergeCandidates([], wikidata.end);
+    const bounds = boundsFromCandidates([...start, ...end]);
 
     response.status(200).json({
       routeNumber,
@@ -34,7 +47,7 @@ export default async function handler(request, response) {
       start,
       end,
       bounds,
-      sourceStatus: { verified: Boolean(VERIFIED_ENDPOINTS[routeNumber]), wikidataError: wikidata.error || null }
+      sourceStatus: { verified: false, wikidataError: null }
     });
   } catch (error) {
     response.status(502).json({ error: `国道${routeNumber}号の起終点候補を取得できませんでした`, detail: error.message });
