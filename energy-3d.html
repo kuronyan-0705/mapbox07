@@ -43,7 +43,6 @@
           status.textContent = token ? 'Loading map...' : 'Mapbox token required';
           mapboxgl.accessToken = token;
           const map = new mapboxgl.Map({ container: 'map', style: 'mapbox://styles/mapbox/dark-v11', center: [140.22, 35.31], zoom: 8.55, pitch: 0, bearing: -35, antialias: true, attributionControl: false, logoPosition: 'bottom-left' });
-          window.route128Map = map;
           map.dragRotate.disable();
           map.touchZoomRotate.disableRotation();
 
@@ -77,36 +76,19 @@
           state.smoothedBearing = 205;
           sceneTitle.textContent = '国道128号線のミステリー';
           map.jumpTo({ center: start, zoom: 12.55, pitch: 74, bearing: 205 });
-          setReveal(map, 0, 0);
+          setFlow(map, 0, .9);
+          startEnergyFlow(map);
           await wait(700);
           map.easeTo({ center: start, zoom: 12.85, pitch: 75, bearing: 320, duration: 2500, easing: easeInOutCubic, essential: true });
           await once(map, 'moveend');
           await followRouteCamera(map, 8200);
           await smoothOutro(map);
-          await finalRouteSweep(map, 5200);
           titleCard.classList.add('visible');
         }
 
         async function smoothOutro(map) {
-          setReveal(map, 1, .95);
           map.easeTo({ center: [140.08, 35.29], zoom: 8.9, pitch: 58, bearing: 0, duration: 6500, easing: easeInOutCubic, essential: true });
           await once(map, 'moveend');
-        }
-
-        async function finalRouteSweep(map, duration) {
-          stopEnergyPulse();
-          setReveal(map, 0, .9);
-          const started = performance.now();
-          return new Promise((resolve) => {
-            const frame = (now) => {
-              const progress = clamp((now - started) / duration, 0, 1);
-              const eased = easeInOutCubic(progress);
-              const pulse = .82 + Math.pow(Math.sin((now - started) / 1000 * 7.4), 8) * .18;
-              setReveal(map, eased, pulse);
-              if (progress < 1) requestAnimationFrame(frame); else { setReveal(map, 1, 1); resolve(); }
-            };
-            requestAnimationFrame(frame);
-          });
         }
 
         async function goToScene(map, nextIndex, options = {}) {
@@ -117,7 +99,7 @@
           sceneTitle.textContent = scene.title;
           status.textContent = `${index + 1}/${scenes.length}: ${scene.title}`;
           titleCard.classList.remove('visible');
-          startEnergyPulse(map, scene.duration || 9000);
+          startEnergyFlow(map);
           map.flyTo({ center: scene.lngLat, zoom: Math.max(scene.zoom, 12.4), pitch: Math.max(scene.pitch || 73, 73), bearing: scene.bearing + 14, duration: options.instant ? 0 : scene.duration, curve: 1.42, speed: .48, essential: true });
           await once(map, 'moveend');
           await waitForIdle(map);
@@ -175,7 +157,7 @@
           if (!response.ok) throw new Error(`API ${response.status}`);
           const route = await response.json();
           const feature = normalizeCameraFeature(route);
-          status.textContent = `OSM relation via API: ${route.metadata?.cameraPathKm || '?'} km / skipped ${route.metadata?.skippedParallelChains || 0}`;
+          status.textContent = `OSM graph path: ${route.metadata?.cameraPathKm || '?'} km / nodes ${route.metadata?.graphNodeCount || '?'}`;
           return { ...route, features: [feature] };
         }
 
@@ -186,7 +168,6 @@
         }
 
         async function followRouteCamera(map, duration) {
-          stopEnergyPulse();
           const path = buildPath(state.routeCoords);
           const started = performance.now();
           return new Promise((resolve) => {
@@ -197,42 +178,45 @@
               const lookAhead = pointAt(path, Math.min(1, eased + .045));
               const targetBearing = bearingBetween(point.coord, lookAhead.coord);
               state.smoothedBearing = smoothBearing(state.smoothedBearing, targetBearing, .085);
-              const pulse = .72 + Math.pow(Math.sin((now - started) / 1000 * 6.2), 8) * .28;
-              setReveal(map, eased, pulse);
               const zoom = 13.05 + Math.sin(Math.PI * eased) * .72;
               const pitch = 74 - Math.max(0, eased - .88) * 44;
               map.jumpTo({ center: point.coord, zoom, pitch, bearing: state.smoothedBearing });
-              if (progress < 1) requestAnimationFrame(frame); else { setReveal(map, 1, pulse); resolve(); }
+              if (progress < 1) requestAnimationFrame(frame); else resolve();
             };
             requestAnimationFrame(frame);
           });
         }
 
-        function startEnergyPulse(map, duration) {
+        function startEnergyFlow(map) {
           stopEnergyPulse();
           const started = performance.now();
-          setReveal(map, 0, 0);
           const step = (now) => {
-            const elapsed = now - started;
-            const reveal = Math.min(1, elapsed / duration);
-            const pulse = .72 + Math.pow(Math.sin(elapsed / 1000 * 6.2), 8) * .28;
-            setReveal(map, reveal, pulse);
+            const progress = ((now - started) / 2450) % 1;
+            const pulse = .8 + Math.pow(Math.sin((now - started) / 1000 * 6.8), 8) * .2;
+            setFlow(map, progress, pulse);
             state.energyFrame = requestAnimationFrame(step);
           };
           state.energyFrame = requestAnimationFrame(step);
         }
 
         function stopEnergyPulse() { if (state.energyFrame) cancelAnimationFrame(state.energyFrame); state.energyFrame = null; }
-        function setReveal(map, progress, pulse) {
-          const p = clamp(progress, 0, 1);
-          setGradient(map, 'route128-reflection', gradientFor('#ff1208', .12 + pulse * .12, p, .13));
-          setGradient(map, 'route128-glow-outer', gradientFor('#ff0808', .58 + pulse * .22, p, .09));
-          setGradient(map, 'route128-glow-inner', gradientFor('#ff2a16', .74 + pulse * .18, p, .062));
-          setGradient(map, 'route128-hot-core', gradientFor('#ff6a38', .88 + pulse * .12, p, .038));
-          setGradient(map, 'route128-core', gradientFor('#fff0dc', .96, p, .018));
+        function setFlow(map, progress, pulse) {
+          setGradient(map, 'route128-reflection', flowGradient('#ff1208', .12 + pulse * .12, progress, .075));
+          setGradient(map, 'route128-glow-outer', flowGradient('#ff0808', .56 + pulse * .24, progress, .05));
+          setGradient(map, 'route128-glow-inner', flowGradient('#ff2a16', .72 + pulse * .2, progress, .038));
+          setGradient(map, 'route128-hot-core', flowGradient('#ff6a38', .86 + pulse * .12, progress, .026));
+          setGradient(map, 'route128-core', flowGradient('#fff0dc', .96, progress, .018));
         }
 
-        function gradientFor(color, opacity, progress, softness) { const rgba = hexToRgba(color, opacity); const dim = hexToRgba(color, opacity * .45); const p = clamp(progress, 0, 1); return ['interpolate', ['linear'], ['line-progress'], 0, rgba, Math.max(0, p - softness), dim, p, rgba, Math.min(1, p + .002), 'rgba(255, 0, 0, 0)', 1, 'rgba(255, 0, 0, 0)']; }
+        function flowGradient(color, opacity, progress, width) {
+          const p = clamp(progress, 0, 1);
+          const start = clamp(p - width, 0, 1);
+          const end = clamp(p + width, 0, 1);
+          const base = hexToRgba(color, opacity * .62);
+          const hot = hexToRgba(color, opacity);
+          return ['interpolate', ['linear'], ['line-progress'], 0, base, start, base, p, hot, end, base, 1, base];
+        }
+
         function buildPath(coords) { const segments = []; let total = 0; for (let i = 0; i < coords.length - 1; i++) { const a = coords[i]; const b = coords[i + 1]; const length = distance(a, b); segments.push({ a, b, start: total, end: total + length, length }); total += length; } return { segments, total }; }
         function pointAt(path, progress) { const target = path.total * clamp(progress, 0, 1); const segment = path.segments.find((item) => target <= item.end) || path.segments[path.segments.length - 1]; const local = segment.length ? (target - segment.start) / segment.length : 0; return { coord: [lerp(segment.a[0], segment.b[0], local), lerp(segment.a[1], segment.b[1], local)] }; }
         function distance(a, b) { const x = (b[0] - a[0]) * Math.cos(((a[1] + b[1]) / 2) * Math.PI / 180); const y = b[1] - a[1]; return Math.sqrt(x * x + y * y); }
