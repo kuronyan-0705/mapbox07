@@ -3,18 +3,18 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>国道128号線のミステリー</title>
+    <title>国道演出システム</title>
     <link href="https://api.mapbox.com/mapbox-gl-js/v3.11.0/mapbox-gl.css" rel="stylesheet">
     <style>
       html, body, #map { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #182026; }
       .mapboxgl-ctrl-logo, .mapboxgl-ctrl-attrib, .mapboxgl-ctrl-bottom-left, .mapboxgl-ctrl-bottom-right { display: none !important; }
       #black-grade { position: fixed; inset: 0; pointer-events: none; background: linear-gradient(rgba(0,0,0,.02), rgba(0,0,0,.05)); mix-blend-mode: multiply; }
       #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at 50% 45%, rgba(0,0,0,0) 0, rgba(0,0,0,.02) 54%, rgba(0,0,0,.24) 100%); }
-      #title-card { position: fixed; left: clamp(28px, 5vw, 72px); bottom: clamp(28px, 7vh, 86px); max-width: min(780px, calc(100vw - 56px)); opacity: 0; transform: translateY(16px); transition: opacity 900ms ease, transform 900ms ease; pointer-events: none; text-shadow: 0 4px 30px rgba(255, 28, 20, .72), 0 3px 20px rgba(0,0,0,.95); }
+      #title-card { position: fixed; left: clamp(28px, 5vw, 72px); bottom: clamp(28px, 7vh, 86px); max-width: min(840px, calc(100vw - 56px)); opacity: 0; transform: translateY(16px); transition: opacity 900ms ease, transform 900ms ease; pointer-events: none; text-shadow: 0 4px 30px rgba(255, 28, 20, .72), 0 3px 20px rgba(0,0,0,.95); }
       #title-card.visible { opacity: 1; transform: translateY(0); }
       #scene-kicker { margin: 0 0 10px; color: #ff9b88; font: 700 clamp(12px, 1.15vw, 17px)/1.45 system-ui, sans-serif; letter-spacing: 0; }
       #scene-title { margin: 0; color: #fff1ec; font: 800 clamp(30px, 4.5vw, 72px)/1.12 "Yu Gothic", "Hiragino Kaku Gothic ProN", Meiryo, system-ui, sans-serif; letter-spacing: 0; }
-      #status { position: fixed; right: 18px; top: 16px; max-width: min(430px, calc(100vw - 36px)); padding: 8px 10px; border: 1px solid rgba(255, 66, 44, .34); background: rgba(0, 0, 0, .46); color: #ffe7df; font: 12px/1.5 system-ui, sans-serif; pointer-events: none; box-shadow: 0 0 22px rgba(255, 24, 24, .18); }
+      #status { position: fixed; right: 18px; top: 16px; max-width: min(460px, calc(100vw - 36px)); padding: 8px 10px; border: 1px solid rgba(255, 66, 44, .34); background: rgba(0, 0, 0, .46); color: #ffe7df; font: 12px/1.5 system-ui, sans-serif; pointer-events: none; box-shadow: 0 0 22px rgba(255, 24, 24, .18); }
       body.ready #status { opacity: .38; }
       body.error #status { opacity: 1; border-color: rgba(255, 88, 66, .8); color: #fff0eb; }
     </style>
@@ -31,18 +31,32 @@
     <script src="https://api.mapbox.com/mapbox-gl-js/v3.11.0/mapbox-gl.js"></script>
     <script>
       (async function boot() {
-        const CHIBA_START = [140.12462, 35.61059];
+        const DEFAULT_PRESET = {
+          routeNumber: '128', relationId: '9069158',
+          title: '国道128号線のミステリー', kicker: 'Route 128 / OpenStreetMap',
+          start: [140.12462, 35.61059], end: [139.86315, 34.99318],
+          bounds: [139.72, 34.86, 140.62, 35.72],
+          mapCenter: [140.22, 35.31], outroCenter: [140.08, 35.29],
+          introZoom: 12.55, followZoom: 13.05, outroZoom: 8.9,
+          pitch: 74, terrain: 2.05, followDuration: 8200, outroDuration: 6500,
+          red: '#ff1208', glowScale: 1, reflectionScale: 1, guideOpacity: .72
+        };
+        const preset = loadDirectorPreset(DEFAULT_PRESET);
         const titleCard = document.getElementById('title-card');
         const sceneTitle = document.getElementById('scene-title');
+        const sceneKicker = document.getElementById('scene-kicker');
         const status = document.getElementById('status');
         const state = { storyline: null, sceneIndex: -1, energyFrame: null, routeCoords: [], smoothedBearing: 210 };
 
         try {
+          document.title = preset.title;
+          sceneTitle.textContent = preset.title;
+          sceneKicker.textContent = preset.kicker;
           const config = await loadRemoteConfig();
           const token = (window.MAPBOX_TOKEN || config.mapboxToken || new URLSearchParams(location.search).get('token') || '').trim();
           status.textContent = token ? 'Loading map...' : 'Mapbox token required';
           mapboxgl.accessToken = token;
-          const map = new mapboxgl.Map({ container: 'map', style: 'mapbox://styles/mapbox/dark-v11', center: [140.22, 35.31], zoom: 8.55, pitch: 0, bearing: -35, antialias: true, attributionControl: false, logoPosition: 'bottom-left' });
+          const map = new mapboxgl.Map({ container: 'map', style: 'mapbox://styles/mapbox/dark-v11', center: preset.mapCenter, zoom: 8.55, pitch: 0, bearing: -35, antialias: true, attributionControl: false, logoPosition: 'bottom-left' });
           map.dragRotate.disable();
           map.touchZoomRotate.disableRotation();
 
@@ -71,17 +85,18 @@
         async function playRouteFilm(map) {
           stopEnergyPulse();
           titleCard.classList.remove('visible');
-          const start = state.routeCoords[0] || CHIBA_START;
+          const start = state.routeCoords[0] || preset.start;
           state.sceneIndex = 0;
           state.smoothedBearing = 205;
-          sceneTitle.textContent = '国道128号線のミステリー';
-          map.jumpTo({ center: start, zoom: 12.55, pitch: 74, bearing: 205 });
+          sceneTitle.textContent = preset.title;
+          sceneKicker.textContent = preset.kicker;
+          map.jumpTo({ center: start, zoom: preset.introZoom, pitch: preset.pitch, bearing: 205 });
           setRouteReveal(map, 0, .95);
           await wait(700);
-          map.easeTo({ center: start, zoom: 12.85, pitch: 75, bearing: 320, duration: 2500, easing: easeInOutCubic, essential: true });
+          map.easeTo({ center: start, zoom: preset.introZoom + .3, pitch: Math.min(85, preset.pitch + 1), bearing: 320, duration: 2500, easing: easeInOutCubic, essential: true });
           await once(map, 'moveend');
           setRouteReveal(map, 0, .98);
-          await followRouteCamera(map, 8200);
+          await followRouteCamera(map, preset.followDuration);
           setRouteReveal(map, 1, 1);
           startEnergyFlow(map);
           await smoothOutro(map);
@@ -89,7 +104,7 @@
         }
 
         async function smoothOutro(map) {
-          map.easeTo({ center: [140.08, 35.29], zoom: 8.9, pitch: 58, bearing: 0, duration: 6500, easing: easeInOutCubic, essential: true });
+          map.easeTo({ center: preset.outroCenter, zoom: preset.outroZoom, pitch: 58, bearing: 0, duration: preset.outroDuration, easing: easeInOutCubic, essential: true });
           await once(map, 'moveend');
         }
 
@@ -128,7 +143,7 @@
 
         function add3DTerrainAndRelief(targetMap) {
           targetMap.addSource('mapbox-dem', { type: 'raster-dem', url: 'mapbox://mapbox.mapbox-terrain-dem-v1', tileSize: 512, maxzoom: 14 });
-          targetMap.setTerrain({ source: 'mapbox-dem', exaggeration: 2.05 });
+          targetMap.setTerrain({ source: 'mapbox-dem', exaggeration: preset.terrain });
           targetMap.addLayer({ id: 'cinematic-hillshade', type: 'hillshade', source: 'mapbox-dem', paint: { 'hillshade-shadow-color': '#11161a', 'hillshade-highlight-color': '#c0c8cc', 'hillshade-accent-color': '#758087', 'hillshade-illumination-direction': 315, 'hillshade-exaggeration': 1.0 } });
           targetMap.setFog({ color: 'rgb(28, 32, 36)', 'high-color': 'rgb(86, 92, 98)', 'horizon-blend': .08, 'space-color': 'rgb(5, 7, 9)', 'star-intensity': 0 });
         }
@@ -139,7 +154,7 @@
         }
 
         async function addEnergyRoute(targetMap) {
-          const route = await loadRoute128();
+          const route = await loadRoute();
           state.routeCoords = route.features[0].geometry.coordinates;
           targetMap.addSource('route128', { type: 'geojson', data: route, lineMetrics: true });
           const width = (a, b, c) => ['interpolate', ['linear'], ['zoom'], 8, a, 14, b, 17, c];
@@ -154,13 +169,20 @@
           setRouteReveal(targetMap, 0, .95);
         }
 
-        async function loadRoute128() {
-          status.textContent = 'Loading OSM relation via Vercel API...';
-          const response = await fetch('/api/osm-route128', { cache: 'no-store' });
+        async function loadRoute() {
+          status.textContent = `Loading OSM relation ${preset.relationId}...`;
+          const params = new URLSearchParams({
+            relationId: preset.relationId,
+            routeNumber: preset.routeNumber,
+            start: preset.start.join(','),
+            end: preset.end.join(','),
+            bounds: preset.bounds.join(',')
+          });
+          const response = await fetch(`/api/osm-route128?${params}`, { cache: 'no-store' });
           if (!response.ok) throw new Error(`API ${response.status}`);
           const route = await response.json();
           const feature = normalizeCameraFeature(route);
-          status.textContent = `OSM graph path: ${route.metadata?.cameraPathKm || '?'} km / nodes ${route.metadata?.graphNodeCount || '?'}`;
+          status.textContent = `Route ${preset.routeNumber}: ${route.metadata?.cameraPathKm || '?'} km / relation ${route.metadata?.relationId || preset.relationId}`;
           return { ...route, features: [feature] };
         }
 
@@ -181,8 +203,8 @@
               const lookAhead = pointAt(path, Math.min(1, eased + .045));
               const targetBearing = bearingBetween(point.coord, lookAhead.coord);
               state.smoothedBearing = smoothBearing(state.smoothedBearing, targetBearing, .085);
-              const zoom = 13.05 + Math.sin(Math.PI * eased) * .72;
-              const pitch = 74 - Math.max(0, eased - .88) * 44;
+              const zoom = preset.followZoom + Math.sin(Math.PI * eased) * .72;
+              const pitch = preset.pitch - Math.max(0, eased - .88) * 44;
               const pulse = .9 + Math.pow(Math.sin(progress * Math.PI * 9), 8) * .14;
               setRouteReveal(map, eased, pulse);
               map.jumpTo({ center: point.coord, zoom, pitch, bearing: state.smoothedBearing });
@@ -206,50 +228,29 @@
 
         function stopEnergyPulse() { if (state.energyFrame) cancelAnimationFrame(state.energyFrame); state.energyFrame = null; }
         function setRouteReveal(map, progress, pulse) {
-          setGradient(map, 'route128-reflection', revealGlowGradient('#ff1208', .12 + pulse * .12, progress));
-          setGradient(map, 'route128-glow-outer', revealGlowGradient('#ff0808', .56 + pulse * .24, progress));
-          setGradient(map, 'route128-glow-inner', revealGlowGradient('#ff2a16', .72 + pulse * .2, progress));
-          setGradient(map, 'route128-hot-core', revealGlowGradient('#ff6a38', .86 + pulse * .12, progress));
+          setGradient(map, 'route128-reflection', revealGlowGradient(preset.red, (.12 + pulse * .12) * preset.reflectionScale, progress));
+          setGradient(map, 'route128-glow-outer', revealGlowGradient('#ff0808', (.56 + pulse * .24) * preset.glowScale, progress));
+          setGradient(map, 'route128-glow-inner', revealGlowGradient('#ff2a16', (.72 + pulse * .2) * preset.glowScale, progress));
+          setGradient(map, 'route128-hot-core', revealGlowGradient('#ff6a38', (.86 + pulse * .12) * preset.glowScale, progress));
           setGradient(map, 'route128-core', revealCoreGradient(progress));
         }
 
         function setCompletedRouteFlow(map, progress, pulse) {
-          setGradient(map, 'route128-reflection', completedFlowGradient('#ff1208', .12 + pulse * .12, progress, .075));
-          setGradient(map, 'route128-glow-outer', completedFlowGradient('#ff0808', .56 + pulse * .24, progress, .05));
-          setGradient(map, 'route128-glow-inner', completedFlowGradient('#ff2a16', .72 + pulse * .2, progress, .038));
-          setGradient(map, 'route128-hot-core', completedFlowGradient('#ff6a38', .86 + pulse * .12, progress, .026));
+          setGradient(map, 'route128-reflection', completedFlowGradient(preset.red, (.12 + pulse * .12) * preset.reflectionScale, progress, .075));
+          setGradient(map, 'route128-glow-outer', completedFlowGradient('#ff0808', (.56 + pulse * .24) * preset.glowScale, progress, .05));
+          setGradient(map, 'route128-glow-inner', completedFlowGradient('#ff2a16', (.72 + pulse * .2) * preset.glowScale, progress, .038));
+          setGradient(map, 'route128-hot-core', completedFlowGradient('#ff6a38', (.86 + pulse * .12) * preset.glowScale, progress, .026));
           setGradient(map, 'route128-core', completedFlowGradient('#fff0dc', .96, progress, .018));
         }
 
-        function revealGlowGradient(color, opacity, progress) {
-          const p = clamp(progress, 0, 1);
-          const hot = hexToRgba(color, opacity);
-          const off = hexToRgba(color, 0);
-          if (p <= 0) return solidGradient(off);
-          if (p >= 1) return solidGradient(hot);
-          const edge = Math.min(1, p + .001);
-          return ['interpolate', ['linear'], ['line-progress'], 0, hot, p, hot, edge, off, 1, off];
-        }
-
-        function revealCoreGradient(progress) {
-          const p = clamp(progress, 0, 1);
-          const lit = 'rgba(255, 240, 220, .98)';
-          const guide = 'rgba(154, 163, 168, .72)';
-          if (p <= 0) return solidGradient(guide);
-          if (p >= 1) return solidGradient(lit);
-          const edge = Math.min(1, p + .001);
-          return ['interpolate', ['linear'], ['line-progress'], 0, lit, p, lit, edge, guide, 1, guide];
-        }
-
-        function completedFlowGradient(color, opacity, progress, width) {
-          const p = clamp(progress, 0, 1);
-          const start = clamp(p - width, 0, 1);
-          const end = clamp(p + width, 0, 1);
-          const base = hexToRgba(color, opacity * .62);
-          const hot = hexToRgba(color, opacity);
-          return ['interpolate', ['linear'], ['line-progress'], 0, base, start, base, p, hot, end, base, 1, base];
-        }
-
+        function revealGlowGradient(color, opacity, progress) { const p = clamp(progress, 0, 1); const hot = hexToRgba(color, opacity); const off = hexToRgba(color, 0); if (p <= 0) return solidGradient(off); if (p >= 1) return solidGradient(hot); const edge = Math.min(1, p + .001); return ['interpolate', ['linear'], ['line-progress'], 0, hot, p, hot, edge, off, 1, off]; }
+        function revealCoreGradient(progress) { const p = clamp(progress, 0, 1); const lit = 'rgba(255, 240, 220, .98)'; const guide = `rgba(154, 163, 168, ${preset.guideOpacity})`; if (p <= 0) return solidGradient(guide); if (p >= 1) return solidGradient(lit); const edge = Math.min(1, p + .001); return ['interpolate', ['linear'], ['line-progress'], 0, lit, p, lit, edge, guide, 1, guide]; }
+        function completedFlowGradient(color, opacity, progress, width) { const p = clamp(progress, 0, 1); const start = clamp(p - width, 0, 1); const end = clamp(p + width, 0, 1); const base = hexToRgba(color, opacity * .62); const hot = hexToRgba(color, opacity); return ['interpolate', ['linear'], ['line-progress'], 0, base, start, base, p, hot, end, base, 1, base]; }
+        function loadDirectorPreset(defaults) { const params = new URLSearchParams(location.search); let saved = {}; try { saved = JSON.parse(localStorage.getItem('routeDirectorPreset') || '{}'); } catch (error) {} const fromQuery = Object.fromEntries(params.entries()); const merged = { ...defaults, ...saved, ...fromQuery }; return normalizePreset(merged, defaults); }
+        function normalizePreset(value, defaults) { const coord = (key) => Array.isArray(value[key]) ? value[key] : parseCoord(value[key], defaults[key]); const number = (key) => finiteNumber(value[key], defaults[key]); return { ...defaults, ...value, relationId: String(value.relationId || defaults.relationId), routeNumber: String(value.routeNumber || defaults.routeNumber), title: String(value.title || defaults.title), kicker: String(value.kicker || defaults.kicker), start: coord('start'), end: coord('end'), bounds: Array.isArray(value.bounds) ? value.bounds : parseBounds(value.bounds, defaults.bounds), mapCenter: coord('mapCenter'), outroCenter: coord('outroCenter'), introZoom: number('introZoom'), followZoom: number('followZoom'), outroZoom: number('outroZoom'), pitch: number('pitch'), terrain: number('terrain'), followDuration: number('followDuration'), outroDuration: number('outroDuration'), glowScale: number('glowScale'), reflectionScale: number('reflectionScale'), guideOpacity: number('guideOpacity'), red: String(value.red || defaults.red) }; }
+        function parseCoord(value, fallback) { const parts = String(value || '').split(',').map((part) => Number(part.trim())); return parts.length === 2 && parts.every(Number.isFinite) ? parts : fallback; }
+        function parseBounds(value, fallback) { const parts = String(value || '').split(',').map((part) => Number(part.trim())); return parts.length === 4 && parts.every(Number.isFinite) ? parts : fallback; }
+        function finiteNumber(value, fallback) { const number = Number(value); return Number.isFinite(number) ? number : fallback; }
         function buildPath(coords) { const segments = []; let total = 0; for (let i = 0; i < coords.length - 1; i++) { const a = coords[i]; const b = coords[i + 1]; const length = distance(a, b); segments.push({ a, b, start: total, end: total + length, length }); total += length; } return { segments, total }; }
         function pointAt(path, progress) { const target = path.total * clamp(progress, 0, 1); const segment = path.segments.find((item) => target <= item.end) || path.segments[path.segments.length - 1]; const local = segment.length ? (target - segment.start) / segment.length : 0; return { coord: [lerp(segment.a[0], segment.b[0], local), lerp(segment.a[1], segment.b[1], local)] }; }
         function distance(a, b) { const x = (b[0] - a[0]) * Math.cos(((a[1] + b[1]) / 2) * Math.PI / 180); const y = b[1] - a[1]; return Math.sqrt(x * x + y * y); }
@@ -258,7 +259,7 @@
         function transparentGradient() { return solidGradient('rgba(255,0,0,0)'); }
         function solidGradient(color) { return ['interpolate', ['linear'], ['line-progress'], 0, color, 1, color]; }
         function setGradient(map, layerId, gradient) { if (map.getLayer(layerId)) map.setPaintProperty(layerId, 'line-gradient', gradient); }
-        function hexToRgba(hex, alpha) { const value = hex.replace('#', ''); const r = parseInt(value.slice(0, 2), 16); const g = parseInt(value.slice(2, 4), 16); const b = parseInt(value.slice(4, 6), 16); return `rgba(${r}, ${g}, ${b}, ${clamp(alpha, 0, 1)})`; }
+        function hexToRgba(hex, alpha) { const value = String(hex).replace('#', '').padEnd(6, '0'); const r = parseInt(value.slice(0, 2), 16); const g = parseInt(value.slice(2, 4), 16); const b = parseInt(value.slice(4, 6), 16); return `rgba(${r}, ${g}, ${b}, ${clamp(alpha, 0, 1)})`; }
         function hideModernPoiLabels(targetMap) { const hidden = [/poi-label/, /transit-label/, /airport-label/, /settlement-subdivision-label/, /building-number-label/]; for (const layer of targetMap.getStyle().layers || []) { if (layer.type === 'symbol' && hidden.some((pattern) => pattern.test(layer.id))) targetMap.setLayoutProperty(layer.id, 'visibility', 'none'); } }
         async function loadRemoteConfig() { try { const response = await fetch('/api/config', { cache: 'no-store' }); return response.ok ? response.json() : {}; } catch (error) { return {}; } }
         async function loadStoryline(config) { if (config.supabaseUrl && config.supabaseAnonKey) { try { const endpoint = `${config.supabaseUrl}/rest/v1/scenes?select=*&order=sort_order.asc`; const response = await fetch(endpoint, { headers: { apikey: config.supabaseAnonKey, authorization: `Bearer ${config.supabaseAnonKey}` } }); const rows = response.ok ? await response.json() : []; if (rows.length) return { scenes: rows.map((row) => ({ id: row.id, title: row.title, lngLat: row.lng_lat, zoom: row.zoom, pitch: row.pitch, bearing: row.bearing, duration: row.duration, overlayImage: row.overlay_image, overlayCoords: row.overlay_coords, highlightRouteId: row.highlight_route_id })) }; } catch (error) { console.warn(error); } } const fallback = await fetch('./storyline.json'); return fallback.json(); }
