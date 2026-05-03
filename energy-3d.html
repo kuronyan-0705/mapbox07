@@ -8,13 +8,13 @@
     <style>
       html, body, #map { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #020304; }
       .mapboxgl-ctrl-logo, .mapboxgl-ctrl-attrib, .mapboxgl-ctrl-bottom-left, .mapboxgl-ctrl-bottom-right { display: none !important; }
-      #black-grade { position: fixed; inset: 0; pointer-events: none; background: linear-gradient(rgba(0,0,0,.14), rgba(0,0,0,.22)); mix-blend-mode: multiply; }
-      #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at 50% 45%, rgba(0,0,0,0) 0, rgba(0,0,0,.14) 42%, rgba(0,0,0,.68) 100%); }
-      #title-card { position: fixed; left: clamp(28px, 5vw, 72px); bottom: clamp(28px, 7vh, 86px); max-width: min(780px, calc(100vw - 56px)); opacity: 0; transform: translateY(16px); transition: opacity 900ms ease, transform 900ms ease; pointer-events: none; text-shadow: 0 4px 26px rgba(255, 28, 20, .5), 0 3px 20px rgba(0,0,0,.95); }
+      #black-grade { position: fixed; inset: 0; pointer-events: none; background: linear-gradient(rgba(0,0,0,.18), rgba(0,0,0,.26)); mix-blend-mode: multiply; }
+      #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at 50% 45%, rgba(0,0,0,0) 0, rgba(0,0,0,.15) 42%, rgba(0,0,0,.7) 100%); }
+      #title-card { position: fixed; left: clamp(28px, 5vw, 72px); bottom: clamp(28px, 7vh, 86px); max-width: min(780px, calc(100vw - 56px)); opacity: 0; transform: translateY(16px); transition: opacity 900ms ease, transform 900ms ease; pointer-events: none; text-shadow: 0 4px 30px rgba(255, 28, 20, .72), 0 3px 20px rgba(0,0,0,.95); }
       #title-card.visible { opacity: 1; transform: translateY(0); }
       #scene-kicker { margin: 0 0 10px; color: #ff9b88; font: 700 clamp(12px, 1.15vw, 17px)/1.45 system-ui, sans-serif; letter-spacing: 0; }
       #scene-title { margin: 0; color: #fff1ec; font: 800 clamp(30px, 4.5vw, 72px)/1.12 "Yu Gothic", "Hiragino Kaku Gothic ProN", Meiryo, system-ui, sans-serif; letter-spacing: 0; }
-      #status { position: fixed; right: 18px; top: 16px; max-width: min(390px, calc(100vw - 36px)); padding: 8px 10px; border: 1px solid rgba(255, 66, 44, .32); background: rgba(0, 0, 0, .72); color: #ffe7df; font: 12px/1.5 system-ui, sans-serif; pointer-events: none; box-shadow: 0 0 18px rgba(255, 24, 24, .12); }
+      #status { position: fixed; right: 18px; top: 16px; max-width: min(390px, calc(100vw - 36px)); padding: 8px 10px; border: 1px solid rgba(255, 66, 44, .34); background: rgba(0, 0, 0, .72); color: #ffe7df; font: 12px/1.5 system-ui, sans-serif; pointer-events: none; box-shadow: 0 0 22px rgba(255, 24, 24, .18); }
       body.ready #status { opacity: .36; }
     </style>
   </head>
@@ -139,7 +139,7 @@
               'hillshade-illumination-direction': 315,
               'hillshade-exaggeration': .78
             }
-          }, 'route128-shadow');
+          });
           targetMap.setFog({
             color: 'rgb(2, 3, 4)',
             'high-color': 'rgb(16, 18, 20)',
@@ -170,29 +170,46 @@
 
         async function addEnergyRoute(targetMap) {
           targetMap.addSource('route128', { type: 'geojson', data: './route128.geojson', lineMetrics: true });
-          targetMap.addLayer({ id: 'route128-shadow', type: 'line', source: 'route128', paint: { 'line-color': '#120000', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 18, 14, 38, 17, 60], 'line-blur': 28, 'line-opacity': .62 } });
-          targetMap.addLayer({ id: 'route128-glow-outer', type: 'line', source: 'route128', paint: { 'line-color': '#d40b12', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 12, 14, 28, 17, 48], 'line-blur': 18, 'line-opacity': .5 } });
-          targetMap.addLayer({ id: 'route128-glow-inner', type: 'line', source: 'route128', paint: { 'line-color': '#ff2318', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 4, 14, 12, 17, 22], 'line-blur': 6, 'line-opacity': .78 } });
-          targetMap.addLayer({ id: 'route128-core', type: 'line', source: 'route128', paint: { 'line-color': '#ffd8c6', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 1.2, 14, 3.6, 17, 6.4], 'line-blur': .55, 'line-opacity': .98 } });
-          targetMap.addLayer({ id: 'route128-scan', type: 'line', source: 'route128', paint: { 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 8, 14, 18, 17, 32], 'line-blur': 5, 'line-opacity': 1, 'line-gradient': ['rgba', 255, 32, 24, 0] } });
+          targetMap.addLayer({ id: 'route128-blood-haze', type: 'line', source: 'route128', paint: { 'line-color': '#3a0000', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 34, 14, 76, 17, 120], 'line-blur': 42, 'line-opacity': .88 } });
+          targetMap.addLayer({ id: 'route128-shadow', type: 'line', source: 'route128', paint: { 'line-color': '#7a0000', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 25, 14, 58, 17, 92], 'line-blur': 32, 'line-opacity': .9 } });
+          targetMap.addLayer({ id: 'route128-glow-outer', type: 'line', source: 'route128', paint: { 'line-color': '#ff0808', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 18, 14, 42, 17, 70], 'line-blur': 23, 'line-opacity': .95 } });
+          targetMap.addLayer({ id: 'route128-glow-inner', type: 'line', source: 'route128', paint: { 'line-color': '#ff2a16', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 9, 14, 24, 17, 40], 'line-blur': 10, 'line-opacity': .98 } });
+          targetMap.addLayer({ id: 'route128-hot-core', type: 'line', source: 'route128', paint: { 'line-color': '#ff5b32', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 5, 14, 13, 17, 22], 'line-blur': 2.4, 'line-opacity': .98 } });
+          targetMap.addLayer({ id: 'route128-core', type: 'line', source: 'route128', paint: { 'line-color': '#fff0dc', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 2.2, 14, 6.5, 17, 11], 'line-blur': .45, 'line-opacity': 1 } });
+          targetMap.addLayer({ id: 'route128-scan-wide', type: 'line', source: 'route128', paint: { 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 20, 14, 48, 17, 78], 'line-blur': 18, 'line-opacity': 1, 'line-gradient': ['rgba', 255, 32, 24, 0] } });
+          targetMap.addLayer({ id: 'route128-scan', type: 'line', source: 'route128', paint: { 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 9, 14, 24, 17, 40], 'line-blur': 5, 'line-opacity': 1, 'line-gradient': ['rgba', 255, 32, 24, 0] } });
         }
 
         function runEnergyPulse() {
           if (state.energyFrame) cancelAnimationFrame(state.energyFrame);
           const started = performance.now();
           const step = (now) => {
-            const t = ((now - started) / 6200) % 1;
-            const tail = Math.max(0, t - .16);
-            const halo = .58 + Math.pow(Math.sin((now - started) / 1000 * 5.4), 8) * .4;
+            const elapsed = now - started;
+            const t = (elapsed / 5200) % 1;
+            const tail = Math.max(0, t - .22);
+            const hot = .72 + Math.pow(Math.sin(elapsed / 1000 * 6.2), 8) * .28;
             if (map.getLayer('route128-glow-inner')) {
-              map.setPaintProperty('route128-glow-inner', 'line-opacity', halo);
+              map.setPaintProperty('route128-blood-haze', 'line-opacity', .74 + hot * .18);
+              map.setPaintProperty('route128-glow-outer', 'line-opacity', .8 + hot * .2);
+              map.setPaintProperty('route128-glow-inner', 'line-opacity', .82 + hot * .18);
+              map.setPaintProperty('route128-hot-core', 'line-opacity', .84 + hot * .16);
+              map.setPaintProperty('route128-scan-wide', 'line-gradient', [
+                'interpolate', ['linear'], ['line-progress'],
+                0, 'rgba(255, 12, 8, 0)',
+                tail, 'rgba(255, 18, 12, 0)',
+                Math.max(tail, t - .085), 'rgba(255, 0, 0, .48)',
+                Math.max(tail, t - .035), 'rgba(255, 56, 28, .9)',
+                t, 'rgba(255, 244, 220, 1)',
+                Math.min(1, t + .055), 'rgba(255, 25, 12, .5)',
+                1, 'rgba(255, 18, 12, 0)'
+              ]);
               map.setPaintProperty('route128-scan', 'line-gradient', [
                 'interpolate', ['linear'], ['line-progress'],
                 0, 'rgba(255, 18, 12, 0)',
                 tail, 'rgba(255, 20, 14, 0)',
-                Math.max(tail, t - .05), 'rgba(255, 46, 26, .72)',
-                t, 'rgba(255, 242, 214, 1)',
-                Math.min(1, t + .035), 'rgba(255, 46, 24, .28)',
+                Math.max(tail, t - .045), 'rgba(255, 58, 26, .85)',
+                t, 'rgba(255, 255, 236, 1)',
+                Math.min(1, t + .035), 'rgba(255, 46, 24, .42)',
                 1, 'rgba(255, 18, 12, 0)'
               ]);
             }
