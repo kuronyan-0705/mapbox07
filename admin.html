@@ -95,6 +95,13 @@
 
     <script>
       const STORAGE_KEY = 'routeDirectorPreset';
+      const ROUTE_HINTS = {
+        '134': {
+          start: [139.686972, 35.266611],
+          end: [139.316528, 35.311083],
+          bounds: [139.25, 35.12, 139.78, 35.38]
+        }
+      };
       const form = document.getElementById('form');
       const output = document.getElementById('output');
       const message = document.getElementById('message');
@@ -131,6 +138,10 @@
 
       function routeParams(preset, autoMode) {
         const params = new URLSearchParams({ routeNumber: preset.routeNumber });
+        const hint = autoMode ? ROUTE_HINTS[String(preset.routeNumber)] : null;
+        if (hint?.start) params.set('start', hint.start.join(','));
+        if (hint?.end) params.set('end', hint.end.join(','));
+        if (hint?.bounds) params.set('bounds', hint.bounds.join(','));
         if (!autoMode && preset.relationId) params.set('relationId', preset.relationId);
         if (!autoMode && Array.isArray(preset.start)) params.set('start', preset.start.join(','));
         if (!autoMode && Array.isArray(preset.end)) params.set('end', preset.end.join(','));
