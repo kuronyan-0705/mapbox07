@@ -8,7 +8,8 @@ const ROUTE_128_RELATION_ID = 9069158;
 const CHIBA_START = [140.12462, 35.61059];
 const TATEYAMA_END = [139.86315, 34.99318];
 const MAX_RELATION_GAP_KM = 0.35;
-const MIN_CHAIN_KM = 2;
+const MAX_PLAYBACK_CHAIN_GAP_KM = 18;
+const MIN_CHAIN_KM = 1;
 
 export default async function handler(request, response) {
   response.setHeader('cache-control', 'no-store');
@@ -156,15 +157,17 @@ function buildGeoJsonFromOrderedWays(relation, orderedWays, sourceUrl, sourceLab
         coordinates,
         memberCount: chain.memberCount,
         lengthKm: pathLengthKm(coordinates),
-        gaps: chain.gaps
+        gaps: chain.gaps,
+        startDistanceKm: distanceKm(coordinates[0], CHIBA_START),
+        endDistanceKm: distanceKm(coordinates[coordinates.length - 1], TATEYAMA_END)
       };
     })
-    .filter((chain) => chain.coordinates.length >= 2 && chain.lengthKm >= MIN_CHAIN_KM)
-    .sort((a, b) => scoreChain(b) - scoreChain(a));
+    .filter((chain) => chain.coordinates.length >= 2 && chain.lengthKm >= MIN_CHAIN_KM);
 
   if (!chains.length) throw new Error('could not build any continuous Route 128 relation chain');
 
-  const cameraChain = chains[0];
+  const cameraChain = buildPlaybackChain(chains);
+  const allSegments = chains.flatMap((chain) => chain.coordinates);
 
   return {
     type: 'FeatureCollection',
@@ -173,14 +176,17 @@ function buildGeoJsonFromOrderedWays(relation, orderedWays, sourceUrl, sourceLab
       sourceUrl,
       relationId: ROUTE_128_RELATION_ID,
       relationName: relation.tags?.name || '国道128号',
-      extraction: 'OSM relation member way order; exact OSM node geometry; no hand drawn coordinates',
+      extraction: 'OSM relation member way order; exact OSM node geometry; multiple relation chains assembled from Chiba side',
       license: 'ODbL-1.0',
       direction: 'Chiba to Tateyama for production playback',
       orderedWayCount: orderedWays.length,
       chainCount: chains.length,
-      cameraPathKm: round(cameraChain.lengthKm, 2),
-      cameraMemberCount: cameraChain.memberCount,
-      maxAllowedGapKm: MAX_RELATION_GAP_KM,
+      usedChainCount: cameraChain.usedChainCount,
+      cameraPathKm: round(pathLengthKm(cameraChain.coordinates), 2),
+      rawSegmentKm: round(pathLengthKm(allSegments), 2),
+      cameraConnectorGapsKm: cameraChain.connectorGapsKm,
+      maxRelationGapKm: MAX_RELATION_GAP_KM,
+      maxPlaybackChainGapKm: MAX_PLAYBACK_CHAIN_GAP_KM,
       extractedAt: new Date().toISOString()
     },
     features: [
@@ -201,6 +207,41 @@ function buildGeoJsonFromOrderedWays(relation, orderedWays, sourceUrl, sourceLab
       }
     ]
   };
+}
+
+function buildPlaybackChain(chains) {
+  const remaining = chains
+    .map((chain) => ({ ...chain, coordinates: orientChibaToTateyama(chain.coordinates) }))
+    .sort((a, b) => a.startDistanceKm - b.startDistanceKm);
+  const firstIndex = remaining.findIndex((chain) => chain.startDistanceKm < 35 || chain.coordinates[0][1] > 35.45);
+  const first = remaining.splice(firstIndex >= 0 ? firstIndex : 0, 1)[0];
+  let coordinates = first.coordinates.slice();
+  const connectorGapsKm = [];
+  let usedChainCount = 1;
+
+  while (remaining.length) {
+    const last = coordinates[coordinates.length - 1];
+    const candidates = remaining
+      .map((chain, index) => {
+        const forwardDistance = distanceKm(last, chain.coordinates[0]);
+        const reverseDistance = distanceKm(last, chain.coordinates[chain.coordinates.length - 1]);
+        return forwardDistance <= reverseDistance
+          ? { index, distanceKm: forwardDistance, coordinates: chain.coordinates }
+          : { index, distanceKm: reverseDistance, coordinates: chain.coordinates.slice().reverse() };
+      })
+      .sort((a, b) => a.distanceKm - b.distanceKm);
+
+    const next = candidates[0];
+    if (!next || next.distanceKm > MAX_PLAYBACK_CHAIN_GAP_KM) break;
+
+    connectorGapsKm.push(round(next.distanceKm, 2));
+    coordinates = appendCoordinates(coordinates, next.coordinates);
+    remaining.splice(next.index, 1);
+    usedChainCount += 1;
+  }
+
+  const oriented = orientChibaToTateyama(deduplicate(coordinates));
+  return { coordinates: oriented, connectorGapsKm, usedChainCount };
 }
 
 function buildRelationChains(orderedEntries) {
@@ -268,13 +309,6 @@ function orientChibaToTateyama(coords) {
   const normal = distanceKm(first, CHIBA_START) + distanceKm(last, TATEYAMA_END);
   const reversed = distanceKm(last, CHIBA_START) + distanceKm(first, TATEYAMA_END);
   return normal <= reversed ? coords : coords.slice().reverse();
-}
-
-function scoreChain(chain) {
-  const first = chain.coordinates[0];
-  const last = chain.coordinates[chain.coordinates.length - 1];
-  const endpointScore = 220 - distanceKm(first, CHIBA_START) - distanceKm(last, TATEYAMA_END);
-  return chain.lengthKm + endpointScore * 0.35 + chain.memberCount * 0.03;
 }
 
 function deduplicate(coords) {
