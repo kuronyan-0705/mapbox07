@@ -1,43 +1,61 @@
-const OSM_FULL_URL = 'https://api.openstreetmap.org/api/0.6/relation/9069158/full.json';
 const OVERPASS_URLS = [
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass-api.de/api/interpreter',
   'https://overpass.openstreetmap.ru/api/interpreter'
 ];
-const ROUTE_128_RELATION_ID = 9069158;
-const CHIBA_START = [140.12462, 35.61059];
-const TATEYAMA_END = [139.86315, 34.99318];
-const ROUTE_BOUNDS = { west: 139.72, south: 34.86, east: 140.62, north: 35.72 };
-const MAX_COMPONENT_GAP_KM = 18;
-const MIN_COMPONENT_LENGTH_KM = 0.35;
+
+const DEFAULT_ROUTE = {
+  relationId: 9069158,
+  routeNumber: '128',
+  start: [140.12462, 35.61059],
+  end: [139.86315, 34.99318],
+  bounds: { west: 139.72, south: 34.86, east: 140.62, north: 35.72 },
+  maxGapKm: 18,
+  minComponentLengthKm: 0.35
+};
 
 export default async function handler(request, response) {
   response.setHeader('cache-control', 's-maxage=86400, stale-while-revalidate=604800');
 
+  const config = readRouteConfig(request);
+
   try {
-    const geojson = await fetchRoute128();
+    const geojson = await fetchRoute(config);
     response.status(200).json(geojson);
   } catch (error) {
     response.status(502).json({
-      error: 'OpenStreetMapから国道128号リレーションを抽出できませんでした',
+      error: `OpenStreetMapから国道${config.routeNumber}号リレーションを抽出できませんでした`,
       detail: error.message
     });
   }
 }
 
-async function fetchRoute128() {
+function readRouteConfig(request) {
+  const url = new URL(request.url, 'https://local.vercel');
+  const relationId = readNumber(url.searchParams.get('relationId'), DEFAULT_ROUTE.relationId);
+  const routeNumber = cleanText(url.searchParams.get('routeNumber')) || DEFAULT_ROUTE.routeNumber;
+  const start = readLngLat(url.searchParams.get('start'), DEFAULT_ROUTE.start);
+  const end = readLngLat(url.searchParams.get('end'), DEFAULT_ROUTE.end);
+  const bounds = readBounds(url.searchParams.get('bounds'), DEFAULT_ROUTE.bounds);
+  const maxGapKm = readNumber(url.searchParams.get('maxGapKm'), DEFAULT_ROUTE.maxGapKm);
+
+  return { ...DEFAULT_ROUTE, relationId, routeNumber, start, end, bounds, maxGapKm };
+}
+
+async function fetchRoute(config) {
   const errors = [];
+  const osmFullUrl = `https://api.openstreetmap.org/api/0.6/relation/${config.relationId}/full.json`;
 
   try {
-    const osm = await fetchOsmFullJson();
-    return buildRouteFromOsmFullJson(osm, OSM_FULL_URL);
+    const osm = await fetchOsmFullJson(osmFullUrl);
+    return buildRouteFromOsmFullJson(osm, osmFullUrl, config);
   } catch (error) {
-    errors.push(`${OSM_FULL_URL}: ${error.message}`);
+    errors.push(`${osmFullUrl}: ${error.message}`);
   }
 
   const query = `
     [out:json][timeout:90];
-    rel(${ROUTE_128_RELATION_ID});
+    rel(${config.relationId});
     out body;
     way(r);
     out tags geom;
@@ -46,7 +64,7 @@ async function fetchRoute128() {
   for (const url of OVERPASS_URLS) {
     try {
       const osm = await fetchOverpassJson(url, query);
-      return buildRouteFromOverpassJson(osm, url);
+      return buildRouteFromOverpassJson(osm, url, config);
     } catch (error) {
       errors.push(`${url}: ${error.message}`);
     }
@@ -55,12 +73,12 @@ async function fetchRoute128() {
   throw new Error(errors.join(' | '));
 }
 
-async function fetchOsmFullJson() {
+async function fetchOsmFullJson(url) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 25000);
 
   try {
-    const response = await fetch(OSM_FULL_URL, { headers: { accept: 'application/json' }, signal: controller.signal });
+    const response = await fetch(url, { headers: { accept: 'application/json' }, signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return await response.json();
   } finally {
@@ -86,10 +104,10 @@ async function fetchOverpassJson(url, query) {
   }
 }
 
-function buildRouteFromOsmFullJson(osm, sourceUrl) {
+function buildRouteFromOsmFullJson(osm, sourceUrl, config) {
   const elements = osm.elements || [];
-  const relation = elements.find((element) => element.type === 'relation' && element.id === ROUTE_128_RELATION_ID);
-  if (!relation || !Array.isArray(relation.members)) throw new Error(`relation ${ROUTE_128_RELATION_ID} missing`);
+  const relation = elements.find((element) => element.type === 'relation' && element.id === config.relationId);
+  if (!relation || !Array.isArray(relation.members)) throw new Error(`relation ${config.relationId} missing`);
 
   const nodeById = new Map(
     elements
@@ -106,15 +124,15 @@ function buildRouteFromOsmFullJson(osm, sourceUrl) {
     .map((member) => wayById.get(member.ref))
     .filter((way) => way && isUsableRoadWay(way))
     .map((way) => way.nodes.map((nodeId) => nodeById.get(nodeId)).filter(Boolean))
-    .filter((coords) => coords.length >= 2 && wayTouchesRouteBounds(coords));
+    .filter((coords) => coords.length >= 2 && wayTouchesRouteBounds(coords, config));
 
-  return buildGeoJson(relation, ways, sourceUrl, 'OpenStreetMap API relation full JSON, component graph trunk path');
+  return buildGeoJson(relation, ways, sourceUrl, 'OpenStreetMap API relation full JSON, component graph trunk path', config);
 }
 
-function buildRouteFromOverpassJson(osm, sourceUrl) {
+function buildRouteFromOverpassJson(osm, sourceUrl, config) {
   const elements = osm.elements || [];
-  const relation = elements.find((element) => element.type === 'relation' && element.id === ROUTE_128_RELATION_ID);
-  if (!relation || !Array.isArray(relation.members)) throw new Error(`relation ${ROUTE_128_RELATION_ID} missing`);
+  const relation = elements.find((element) => element.type === 'relation' && element.id === config.relationId);
+  if (!relation || !Array.isArray(relation.members)) throw new Error(`relation ${config.relationId} missing`);
 
   const wayById = new Map(
     elements
@@ -126,35 +144,37 @@ function buildRouteFromOverpassJson(osm, sourceUrl) {
     .map((member) => wayById.get(member.ref))
     .filter((way) => way && isUsableRoadWay(way))
     .map((way) => way.geometry.map((point) => [point.lon, point.lat]))
-    .filter((coords) => coords.length >= 2 && wayTouchesRouteBounds(coords));
+    .filter((coords) => coords.length >= 2 && wayTouchesRouteBounds(coords, config));
 
-  return buildGeoJson(relation, ways, sourceUrl, 'OpenStreetMap Overpass relation, component graph trunk path');
+  return buildGeoJson(relation, ways, sourceUrl, 'OpenStreetMap Overpass relation, component graph trunk path', config);
 }
 
-function buildGeoJson(relation, ways, sourceUrl, sourceLabel) {
+function buildGeoJson(relation, ways, sourceUrl, sourceLabel, config) {
   if (!ways.length) throw new Error('relation contains no usable highway ways with geometry');
 
   const graph = buildGraph(ways);
   const components = connectedComponents(graph)
-    .map((nodeSet) => describeComponent(graph, nodeSet))
-    .filter((component) => component.lengthKm >= MIN_COMPONENT_LENGTH_KM)
+    .map((nodeSet) => describeComponent(graph, nodeSet, config))
+    .filter((component) => component.lengthKm >= config.minComponentLengthKm)
     .sort((a, b) => a.startDistanceKm - b.startDistanceKm);
 
-  const assembled = assembleComponentPath(graph, components);
-  if (assembled.coordinates.length < 2) throw new Error('could not build an ordered Route 128 component path');
+  const assembled = assembleComponentPath(graph, components, config);
+  if (assembled.coordinates.length < 2) throw new Error('could not build an ordered route component path');
 
-  const coordinates = orientChibaToTateyama(deduplicate(assembled.coordinates));
+  const coordinates = orientStartToEnd(deduplicate(assembled.coordinates), config);
+  const relationName = relation.tags?.name || `国道${config.routeNumber}号`;
 
   return {
     type: 'FeatureCollection',
     metadata: {
       source: sourceLabel,
       sourceUrl,
-      relationId: ROUTE_128_RELATION_ID,
-      relationName: relation.tags?.name || '国道128号',
-      extraction: 'OSM relation graph split into connected road components. For each component, only one Chiba-to-Tateyama trunk path is selected; duplicate branches and parallel alternatives are excluded.',
+      relationId: config.relationId,
+      routeNumber: config.routeNumber,
+      relationName,
+      extraction: 'OSM relation graph split into connected road components. For each component, only one start-to-end trunk path is selected; duplicate branches and parallel alternatives are excluded.',
       license: 'ODbL-1.0',
-      direction: 'Chiba to Tateyama for production playback',
+      direction: 'Configured start to end for production playback',
       inputWayCount: ways.length,
       graphNodeCount: graph.coords.size,
       graphEdgeCount: graph.edgeCount,
@@ -162,8 +182,8 @@ function buildGeoJson(relation, ways, sourceUrl, sourceLabel) {
       usedComponentCount: assembled.usedComponents,
       connectorGapCount: assembled.connectorGaps.length,
       connectorGapsKm: assembled.connectorGaps.map((gap) => round(gap, 2)),
-      startSnapKm: round(distanceKm(coordinates[0], CHIBA_START), 2),
-      endSnapKm: round(distanceKm(coordinates[coordinates.length - 1], TATEYAMA_END), 2),
+      startSnapKm: round(distanceKm(coordinates[0], config.start), 2),
+      endSnapKm: round(distanceKm(coordinates[coordinates.length - 1], config.end), 2),
       cameraPathKm: round(pathLengthKm(coordinates), 2),
       extractedAt: new Date().toISOString()
     },
@@ -171,15 +191,13 @@ function buildGeoJson(relation, ways, sourceUrl, sourceLabel) {
       {
         type: 'Feature',
         properties: {
-          id: 'route128_main',
+          id: `route${config.routeNumber}_main`,
           role: 'camera-path',
-          name: relation.tags?.name || '国道128号',
-          ref: relation.tags?.ref || '128',
+          name: relationName,
+          ref: relation.tags?.ref || config.routeNumber,
           network: relation.tags?.network || 'JP:national',
-          osm_relation_id: ROUTE_128_RELATION_ID,
-          source: 'component-trunk-osm-relation-graph-path',
-          start: '千葉市中央区 広小路交差点',
-          end: '館山市 北条交差点'
+          osm_relation_id: config.relationId,
+          source: 'component-trunk-osm-relation-graph-path'
         },
         geometry: { type: 'LineString', coordinates }
       }
@@ -187,23 +205,23 @@ function buildGeoJson(relation, ways, sourceUrl, sourceLabel) {
   };
 }
 
-function assembleComponentPath(graph, components) {
+function assembleComponentPath(graph, components, config) {
   const unused = new Set(components.map((component) => component.id));
   const componentById = new Map(components.map((component) => [component.id, component]));
   const coordinates = [];
   const connectorGaps = [];
-  let currentPoint = CHIBA_START;
+  let currentPoint = config.start;
   let usedComponents = 0;
 
   while (unused.size) {
-    const next = chooseNextComponent(components, unused, currentPoint);
+    const next = chooseNextComponent(components, unused, currentPoint, config);
     if (!next) break;
 
     const gapKm = distanceKm(currentPoint, next.entryCoord);
-    if (usedComponents > 0 && gapKm > MAX_COMPONENT_GAP_KM) break;
+    if (usedComponents > 0 && gapKm > config.maxGapKm) break;
 
     const entryKey = nearestNodeInSet(graph, currentPoint, next.nodeSet);
-    const exitKey = chooseExitNode(graph, next.nodeSet, TATEYAMA_END);
+    const exitKey = chooseExitNode(graph, next.nodeSet, config.end);
     let pathKeys = shortestPath(graph, entryKey, exitKey);
 
     if (pathKeys.length < 2) {
@@ -215,28 +233,25 @@ function assembleComponentPath(graph, components) {
       continue;
     }
 
-    const segment = pathKeys.map((key) => graph.coords.get(key));
-    appendCoordinates(coordinates, segment);
+    appendCoordinates(coordinates, pathKeys.map((key) => graph.coords.get(key)));
     currentPoint = coordinates[coordinates.length - 1];
     usedComponents += 1;
     unused.delete(next.id);
 
     if (usedComponents > 1) connectorGaps.push(gapKm);
-
-    // Chiba -> Tateyama is covered once the selected trunk reaches the endpoint area.
-    if (distanceKm(currentPoint, TATEYAMA_END) < 3.5) break;
+    if (distanceKm(currentPoint, config.end) < 3.5) break;
 
     const remainingNearCurrent = [...unused]
       .map((id) => componentById.get(id))
       .filter(Boolean)
-      .some((component) => componentDistanceToPoint(graph, component.nodeSet, currentPoint) <= MAX_COMPONENT_GAP_KM);
+      .some((component) => componentDistanceToPoint(graph, component.nodeSet, currentPoint) <= config.maxGapKm);
     if (!remainingNearCurrent) break;
   }
 
   return { coordinates, connectorGaps, usedComponents };
 }
 
-function chooseNextComponent(components, unused, currentPoint) {
+function chooseNextComponent(components, unused, currentPoint, config) {
   let best = null;
   let bestScore = Infinity;
 
@@ -245,7 +260,7 @@ function chooseNextComponent(components, unused, currentPoint) {
     const entryKey = nearestNodeInSet(component.graph, currentPoint, component.nodeSet);
     const entryCoord = component.graph.coords.get(entryKey);
     const gapKm = distanceKm(currentPoint, entryCoord);
-    const progressPenalty = Math.max(0, component.startDistanceKm - distanceKm(currentPoint, CHIBA_START) - 10) * 0.2;
+    const progressPenalty = Math.max(0, component.startDistanceKm - distanceKm(currentPoint, config.start) - 10) * 0.2;
     const endBonus = component.endDistanceKm * 0.08;
     const score = gapKm + progressPenalty + endBonus;
     if (score < bestScore) {
@@ -257,17 +272,17 @@ function chooseNextComponent(components, unused, currentPoint) {
   return best;
 }
 
-function describeComponent(graph, nodeSet) {
+function describeComponent(graph, nodeSet, config) {
   const id = [...nodeSet][0];
-  const startKey = nearestNodeInSet(graph, CHIBA_START, nodeSet);
-  const endKey = nearestNodeInSet(graph, TATEYAMA_END, nodeSet);
+  const startKey = nearestNodeInSet(graph, config.start, nodeSet);
+  const endKey = nearestNodeInSet(graph, config.end, nodeSet);
   return {
     id,
     graph,
     nodeSet,
     lengthKm: componentLengthKm(graph, nodeSet),
-    startDistanceKm: distanceKm(graph.coords.get(startKey), CHIBA_START),
-    endDistanceKm: distanceKm(graph.coords.get(endKey), TATEYAMA_END)
+    startDistanceKm: distanceKm(graph.coords.get(startKey), config.start),
+    endDistanceKm: distanceKm(graph.coords.get(endKey), config.end)
   };
 }
 
@@ -415,8 +430,9 @@ function isUsableRoadWay(way) {
   return Boolean(highway) && !['footway', 'cycleway', 'path', 'steps', 'pedestrian', 'service', 'track'].includes(highway);
 }
 
-function wayTouchesRouteBounds(coords) {
-  return coords.some(([lng, lat]) => lng >= ROUTE_BOUNDS.west && lng <= ROUTE_BOUNDS.east && lat >= ROUTE_BOUNDS.south && lat <= ROUTE_BOUNDS.north);
+function wayTouchesRouteBounds(coords, config) {
+  const { west, south, east, north } = config.bounds;
+  return coords.some(([lng, lat]) => lng >= west && lng <= east && lat >= south && lat <= north);
 }
 
 function appendCoordinates(target, segment) {
@@ -430,11 +446,11 @@ function coordKey(coord) {
   return `${coord[0].toFixed(6)},${coord[1].toFixed(6)}`;
 }
 
-function orientChibaToTateyama(coords) {
+function orientStartToEnd(coords, config) {
   const first = coords[0];
   const last = coords[coords.length - 1];
-  const normal = distanceKm(first, CHIBA_START) + distanceKm(last, TATEYAMA_END);
-  const reversed = distanceKm(last, CHIBA_START) + distanceKm(first, TATEYAMA_END);
+  const normal = distanceKm(first, config.start) + distanceKm(last, config.end);
+  const reversed = distanceKm(last, config.start) + distanceKm(first, config.end);
   return normal <= reversed ? coords : coords.slice().reverse();
 }
 
@@ -451,6 +467,26 @@ function pathLengthKm(coords) {
   let total = 0;
   for (let index = 0; index < coords.length - 1; index++) total += distanceKm(coords[index], coords[index + 1]);
   return total;
+}
+
+function readLngLat(value, fallback) {
+  const parts = String(value || '').split(',').map((item) => Number(item.trim()));
+  return parts.length === 2 && parts.every(Number.isFinite) ? parts : fallback;
+}
+
+function readBounds(value, fallback) {
+  const parts = String(value || '').split(',').map((item) => Number(item.trim()));
+  if (parts.length !== 4 || !parts.every(Number.isFinite)) return fallback;
+  return { west: parts[0], south: parts[1], east: parts[2], north: parts[3] };
+}
+
+function readNumber(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+function cleanText(value) {
+  return String(value || '').replace(/[^0-9A-Za-z_-]/g, '').slice(0, 32);
 }
 
 function distanceKm(a, b) {
