@@ -6,15 +6,15 @@
     <title>Route 128 3D Energy Director</title>
     <link href="https://api.mapbox.com/mapbox-gl-js/v3.11.0/mapbox-gl.css" rel="stylesheet">
     <style>
-      html, body, #map { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #090b0d; }
+      html, body, #map { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #171b1f; }
       .mapboxgl-ctrl-logo, .mapboxgl-ctrl-attrib, .mapboxgl-ctrl-bottom-left, .mapboxgl-ctrl-bottom-right { display: none !important; }
-      #black-grade { position: fixed; inset: 0; pointer-events: none; background: linear-gradient(rgba(0,0,0,.04), rgba(0,0,0,.08)); mix-blend-mode: multiply; }
-      #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at 50% 45%, rgba(0,0,0,0) 0, rgba(0,0,0,.06) 48%, rgba(0,0,0,.46) 100%); }
+      #black-grade { position: fixed; inset: 0; pointer-events: none; background: linear-gradient(rgba(0,0,0,.01), rgba(0,0,0,.03)); mix-blend-mode: multiply; }
+      #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at 50% 45%, rgba(0,0,0,0) 0, rgba(0,0,0,.03) 52%, rgba(0,0,0,.28) 100%); }
       #title-card { position: fixed; left: clamp(28px, 5vw, 72px); bottom: clamp(28px, 7vh, 86px); max-width: min(780px, calc(100vw - 56px)); opacity: 0; transform: translateY(16px); transition: opacity 900ms ease, transform 900ms ease; pointer-events: none; text-shadow: 0 4px 30px rgba(255, 28, 20, .72), 0 3px 20px rgba(0,0,0,.95); }
       #title-card.visible { opacity: 1; transform: translateY(0); }
       #scene-kicker { margin: 0 0 10px; color: #ff9b88; font: 700 clamp(12px, 1.15vw, 17px)/1.45 system-ui, sans-serif; letter-spacing: 0; }
       #scene-title { margin: 0; color: #fff1ec; font: 800 clamp(30px, 4.5vw, 72px)/1.12 "Yu Gothic", "Hiragino Kaku Gothic ProN", Meiryo, system-ui, sans-serif; letter-spacing: 0; }
-      #status { position: fixed; right: 18px; top: 16px; max-width: min(390px, calc(100vw - 36px)); padding: 8px 10px; border: 1px solid rgba(255, 66, 44, .34); background: rgba(0, 0, 0, .64); color: #ffe7df; font: 12px/1.5 system-ui, sans-serif; pointer-events: none; box-shadow: 0 0 22px rgba(255, 24, 24, .18); }
+      #status { position: fixed; right: 18px; top: 16px; max-width: min(390px, calc(100vw - 36px)); padding: 8px 10px; border: 1px solid rgba(255, 66, 44, .34); background: rgba(0, 0, 0, .5); color: #ffe7df; font: 12px/1.5 system-ui, sans-serif; pointer-events: none; box-shadow: 0 0 22px rgba(255, 24, 24, .18); }
       body.ready #status { opacity: .36; }
     </style>
   </head>
@@ -35,7 +35,7 @@
         const titleCard = document.getElementById('title-card');
         const sceneTitle = document.getElementById('scene-title');
         const status = document.getElementById('status');
-        const state = { storyline: null, sceneIndex: -1, autoplayTimer: null, energyFrame: null };
+        const state = { storyline: null, sceneIndex: -1, autoplayTimer: null, energyFrame: null, revealStart: 0 };
 
         if (!token) status.textContent = 'Set MAPBOX_TOKEN in Vercel';
         mapboxgl.accessToken = token;
@@ -43,10 +43,10 @@
         const map = new mapboxgl.Map({
           container: 'map',
           style: 'mapbox://styles/mapbox/dark-v11',
-          center: [140.34, 35.33],
-          zoom: 10.9,
-          pitch: 73,
-          bearing: 24,
+          center: [140.22, 35.31],
+          zoom: 8.65,
+          pitch: 0,
+          bearing: 0,
           antialias: true,
           attributionControl: false,
           logoPosition: 'bottom-left'
@@ -63,14 +63,27 @@
         await addEnergyRoute(map);
         state.storyline = await loadStoryline(config);
         document.body.classList.add('ready');
-        status.textContent = 'Space: next scene / R: autoplay';
+        status.textContent = 'Intro: flat map to 3D / Space: next scene / R: autoplay';
         await waitForIdle(map);
-        goToScene(0);
+        playIntro();
 
         window.addEventListener('keydown', (event) => {
           if (event.code === 'Space') { event.preventDefault(); goToScene(state.sceneIndex + 1); }
           if (event.key.toLowerCase() === 'r') { event.preventDefault(); startAutopilot(); }
         });
+
+        async function playIntro() {
+          const first = state.storyline.scenes[0];
+          state.sceneIndex = 0;
+          sceneTitle.textContent = first.title;
+          map.jumpTo({ center: [140.18, 35.30], zoom: 8.75, pitch: 0, bearing: 0 });
+          resetReveal();
+          runEnergyPulse();
+          await wait(900);
+          map.easeTo({ center: first.lngLat, zoom: 12.45, pitch: 73, bearing: 32, duration: 9000, easing: easeInOutCubic, essential: true });
+          await once(map, 'moveend');
+          titleCard.classList.add('visible');
+        }
 
         async function goToScene(nextIndex, options = {}) {
           const scenes = state.storyline.scenes;
@@ -80,13 +93,14 @@
           sceneTitle.textContent = scene.title;
           status.textContent = `${index + 1}/${scenes.length}: ${scene.title}`;
           titleCard.classList.remove('visible');
+          resetReveal();
           runEnergyPulse();
 
           map.flyTo({
             center: scene.lngLat,
             zoom: Math.max(scene.zoom, 12.4),
             pitch: Math.max(scene.pitch || 73, 73),
-            bearing: scene.bearing + 10,
+            bearing: scene.bearing + 14,
             duration: options.instant ? 0 : scene.duration,
             curve: 1.42,
             speed: .48,
@@ -101,52 +115,41 @@
         function tuneMapForReadableTerrain(targetMap) {
           const layers = targetMap.getStyle().layers || [];
           for (const layer of layers) {
-            if (layer.type === 'background') targetMap.setPaintProperty(layer.id, 'background-color', '#0b0e10');
+            if (layer.type === 'background') targetMap.setPaintProperty(layer.id, 'background-color', '#171b1f');
             if (layer.type === 'fill') {
-              targetMap.setPaintProperty(layer.id, 'fill-color', '#24292d');
-              targetMap.setPaintProperty(layer.id, 'fill-opacity', .92);
+              targetMap.setPaintProperty(layer.id, 'fill-color', '#3e464c');
+              targetMap.setPaintProperty(layer.id, 'fill-opacity', .98);
             }
             if (layer.type === 'line') {
-              targetMap.setPaintProperty(layer.id, 'line-color', '#454c52');
-              targetMap.setPaintProperty(layer.id, 'line-opacity', .52);
+              targetMap.setPaintProperty(layer.id, 'line-color', '#6b747a');
+              targetMap.setPaintProperty(layer.id, 'line-opacity', .68);
             }
             if (layer.type === 'symbol') {
-              targetMap.setPaintProperty(layer.id, 'text-color', '#8a9298');
-              targetMap.setPaintProperty(layer.id, 'text-halo-color', '#111416');
-              targetMap.setPaintProperty(layer.id, 'text-halo-width', .7);
-              targetMap.setPaintProperty(layer.id, 'text-opacity', .64);
-              targetMap.setPaintProperty(layer.id, 'icon-opacity', .32);
+              targetMap.setPaintProperty(layer.id, 'text-color', '#b4bdc4');
+              targetMap.setPaintProperty(layer.id, 'text-halo-color', '#1b2024');
+              targetMap.setPaintProperty(layer.id, 'text-halo-width', .8);
+              targetMap.setPaintProperty(layer.id, 'text-opacity', .78);
+              targetMap.setPaintProperty(layer.id, 'icon-opacity', .42);
             }
           }
         }
 
         function add3DTerrainAndRelief(targetMap) {
-          targetMap.addSource('mapbox-dem', {
-            type: 'raster-dem',
-            url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
-            tileSize: 512,
-            maxzoom: 14
-          });
-          targetMap.setTerrain({ source: 'mapbox-dem', exaggeration: 2.05 });
+          targetMap.addSource('mapbox-dem', { type: 'raster-dem', url: 'mapbox://mapbox.mapbox-terrain-dem-v1', tileSize: 512, maxzoom: 14 });
+          targetMap.setTerrain({ source: 'mapbox-dem', exaggeration: 2.15 });
           targetMap.addLayer({
             id: 'cinematic-hillshade',
             type: 'hillshade',
             source: 'mapbox-dem',
             paint: {
-              'hillshade-shadow-color': '#050607',
-              'hillshade-highlight-color': '#70777c',
-              'hillshade-accent-color': '#343b40',
+              'hillshade-shadow-color': '#11161a',
+              'hillshade-highlight-color': '#b2bbc0',
+              'hillshade-accent-color': '#69737a',
               'hillshade-illumination-direction': 315,
-              'hillshade-exaggeration': .95
+              'hillshade-exaggeration': 1.08
             }
           });
-          targetMap.setFog({
-            color: 'rgb(10, 12, 14)',
-            'high-color': 'rgb(38, 42, 46)',
-            'horizon-blend': .05,
-            'space-color': 'rgb(1, 2, 3)',
-            'star-intensity': 0
-          });
+          targetMap.setFog({ color: 'rgb(22, 25, 28)', 'high-color': 'rgb(78, 84, 90)', 'horizon-blend': .07, 'space-color': 'rgb(4, 5, 7)', 'star-intensity': 0 });
         }
 
         function add3DBuildings(targetMap) {
@@ -159,10 +162,10 @@
             type: 'fill-extrusion',
             minzoom: 14,
             paint: {
-              'fill-extrusion-color': ['interpolate', ['linear'], ['zoom'], 14, '#1a1f23', 17, '#2e353a'],
+              'fill-extrusion-color': ['interpolate', ['linear'], ['zoom'], 14, '#2a3035', 17, '#46515a'],
               'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'height']],
               'fill-extrusion-base': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'min_height']],
-              'fill-extrusion-opacity': .76,
+              'fill-extrusion-opacity': .78,
               'fill-extrusion-vertical-gradient': true
             }
           }, labelLayer && labelLayer.id);
@@ -170,52 +173,100 @@
 
         async function addEnergyRoute(targetMap) {
           targetMap.addSource('route128', { type: 'geojson', data: './route128.geojson', lineMetrics: true });
-          targetMap.addLayer({ id: 'route128-blood-haze', type: 'line', source: 'route128', paint: { 'line-color': '#3a0000', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 34, 14, 76, 17, 120], 'line-blur': 42, 'line-opacity': .82 } });
-          targetMap.addLayer({ id: 'route128-shadow', type: 'line', source: 'route128', paint: { 'line-color': '#7a0000', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 25, 14, 58, 17, 92], 'line-blur': 32, 'line-opacity': .86 } });
-          targetMap.addLayer({ id: 'route128-glow-outer', type: 'line', source: 'route128', paint: { 'line-color': '#ff0808', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 18, 14, 42, 17, 70], 'line-blur': 23, 'line-opacity': .95 } });
-          targetMap.addLayer({ id: 'route128-glow-inner', type: 'line', source: 'route128', paint: { 'line-color': '#ff2a16', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 9, 14, 24, 17, 40], 'line-blur': 10, 'line-opacity': .98 } });
-          targetMap.addLayer({ id: 'route128-hot-core', type: 'line', source: 'route128', paint: { 'line-color': '#ff5b32', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 5, 14, 13, 17, 22], 'line-blur': 2.4, 'line-opacity': .98 } });
-          targetMap.addLayer({ id: 'route128-core', type: 'line', source: 'route128', paint: { 'line-color': '#fff0dc', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 2.2, 14, 6.5, 17, 11], 'line-blur': .45, 'line-opacity': 1 } });
-          targetMap.addLayer({ id: 'route128-scan-wide', type: 'line', source: 'route128', paint: { 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 20, 14, 48, 17, 78], 'line-blur': 18, 'line-opacity': 1, 'line-gradient': ['rgba', 255, 32, 24, 0] } });
-          targetMap.addLayer({ id: 'route128-scan', type: 'line', source: 'route128', paint: { 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 9, 14, 24, 17, 40], 'line-blur': 5, 'line-opacity': 1, 'line-gradient': ['rgba', 255, 32, 24, 0] } });
+          const width = (a, b, c) => ['interpolate', ['linear'], ['zoom'], 8, a, 14, b, 17, c];
+          const layers = [
+            ['route128-terrain-reflection', 98, 185, 260, 48, .58],
+            ['route128-blood-haze', 42, 92, 142, 44, .86],
+            ['route128-shadow', 30, 68, 108, 34, .9],
+            ['route128-glow-outer', 20, 48, 78, 24, .96],
+            ['route128-glow-inner', 10, 28, 46, 11, .98],
+            ['route128-hot-core', 5, 14, 24, 3, .98],
+            ['route128-core', 2.3, 7, 12, .45, 1]
+          ];
+          for (const [id, w8, w14, w17, blur, opacity] of layers) {
+            targetMap.addLayer({ id, type: 'line', source: 'route128', paint: { 'line-width': width(w8, w14, w17), 'line-blur': blur, 'line-opacity': opacity, 'line-gradient': transparentGradient() } });
+          }
+          targetMap.addLayer({ id: 'route128-scan-wide', type: 'line', source: 'route128', paint: { 'line-width': width(22, 54, 86), 'line-blur': 20, 'line-opacity': 1, 'line-gradient': transparentGradient() } });
+          targetMap.addLayer({ id: 'route128-scan', type: 'line', source: 'route128', paint: { 'line-width': width(10, 26, 42), 'line-blur': 5, 'line-opacity': 1, 'line-gradient': transparentGradient() } });
+        }
+
+        function resetReveal() {
+          state.revealStart = performance.now();
+          setReveal(0, 0);
         }
 
         function runEnergyPulse() {
           if (state.energyFrame) cancelAnimationFrame(state.energyFrame);
-          const started = performance.now();
           const step = (now) => {
-            const elapsed = now - started;
-            const t = (elapsed / 5200) % 1;
-            const tail = Math.max(0, t - .22);
-            const hot = .72 + Math.pow(Math.sin(elapsed / 1000 * 6.2), 8) * .28;
-            if (map.getLayer('route128-glow-inner')) {
-              map.setPaintProperty('route128-blood-haze', 'line-opacity', .7 + hot * .16);
-              map.setPaintProperty('route128-glow-outer', 'line-opacity', .8 + hot * .2);
-              map.setPaintProperty('route128-glow-inner', 'line-opacity', .82 + hot * .18);
-              map.setPaintProperty('route128-hot-core', 'line-opacity', .84 + hot * .16);
-              map.setPaintProperty('route128-scan-wide', 'line-gradient', [
-                'interpolate', ['linear'], ['line-progress'],
-                0, 'rgba(255, 12, 8, 0)',
-                tail, 'rgba(255, 18, 12, 0)',
-                Math.max(tail, t - .085), 'rgba(255, 0, 0, .48)',
-                Math.max(tail, t - .035), 'rgba(255, 56, 28, .9)',
-                t, 'rgba(255, 244, 220, 1)',
-                Math.min(1, t + .055), 'rgba(255, 25, 12, .5)',
-                1, 'rgba(255, 18, 12, 0)'
-              ]);
-              map.setPaintProperty('route128-scan', 'line-gradient', [
-                'interpolate', ['linear'], ['line-progress'],
-                0, 'rgba(255, 18, 12, 0)',
-                tail, 'rgba(255, 20, 14, 0)',
-                Math.max(tail, t - .045), 'rgba(255, 58, 26, .85)',
-                t, 'rgba(255, 255, 236, 1)',
-                Math.min(1, t + .035), 'rgba(255, 46, 24, .42)',
-                1, 'rgba(255, 18, 12, 0)'
-              ]);
-            }
+            const elapsed = now - state.revealStart;
+            const reveal = Math.min(1, elapsed / 7600);
+            const pulse = .72 + Math.pow(Math.sin(elapsed / 1000 * 6.2), 8) * .28;
+            setReveal(reveal, pulse);
             state.energyFrame = requestAnimationFrame(step);
           };
           state.energyFrame = requestAnimationFrame(step);
+        }
+
+        function setReveal(progress, pulse) {
+          const p = clamp(progress, 0, 1);
+          const bodyEnd = Math.max(0, p - .02);
+          const headStart = Math.max(0, p - .08);
+          const headEnd = Math.min(1, p + .035);
+          setGradient('route128-terrain-reflection', gradientFor('#ff1208', .24 + pulse * .18, p, .22));
+          setGradient('route128-blood-haze', gradientFor('#780000', .44 + pulse * .22, p, .16));
+          setGradient('route128-shadow', gradientFor('#b80000', .5 + pulse * .24, p, .14));
+          setGradient('route128-glow-outer', gradientFor('#ff0808', .62 + pulse * .28, p, .11));
+          setGradient('route128-glow-inner', gradientFor('#ff2a16', .72 + pulse * .24, p, .08));
+          setGradient('route128-hot-core', gradientFor('#ff6a38', .82 + pulse * .18, p, .05));
+          setGradient('route128-core', gradientFor('#fff0dc', .92, p, .025));
+          setGradient('route128-scan-wide', [
+            'interpolate', ['linear'], ['line-progress'],
+            0, 'rgba(255, 12, 8, 0)',
+            Math.max(0, bodyEnd - .2), 'rgba(255, 12, 8, 0)',
+            headStart, 'rgba(255, 0, 0, .4)',
+            p, 'rgba(255, 240, 210, 1)',
+            headEnd, 'rgba(255, 30, 12, .18)',
+            1, 'rgba(255, 18, 12, 0)'
+          ]);
+          setGradient('route128-scan', [
+            'interpolate', ['linear'], ['line-progress'],
+            0, 'rgba(255, 18, 12, 0)',
+            Math.max(0, bodyEnd - .1), 'rgba(255, 20, 14, 0)',
+            headStart, 'rgba(255, 58, 26, .85)',
+            p, 'rgba(255, 255, 236, 1)',
+            headEnd, 'rgba(255, 46, 24, .34)',
+            1, 'rgba(255, 18, 12, 0)'
+          ]);
+        }
+
+        function gradientFor(color, opacity, progress, softness) {
+          const rgba = hexToRgba(color, opacity);
+          const dim = hexToRgba(color, opacity * .45);
+          const p = clamp(progress, 0, 1);
+          return [
+            'interpolate', ['linear'], ['line-progress'],
+            0, rgba,
+            Math.max(0, p - softness), dim,
+            p, rgba,
+            Math.min(1, p + .002), 'rgba(255, 0, 0, 0)',
+            1, 'rgba(255, 0, 0, 0)'
+          ];
+        }
+
+        function transparentGradient() {
+          return ['interpolate', ['linear'], ['line-progress'], 0, 'rgba(255,0,0,0)', 1, 'rgba(255,0,0,0)'];
+        }
+
+        function setGradient(layerId, gradient) {
+          if (map.getLayer(layerId)) map.setPaintProperty(layerId, 'line-gradient', gradient);
+        }
+
+        function hexToRgba(hex, alpha) {
+          const value = hex.replace('#', '');
+          const r = parseInt(value.slice(0, 2), 16);
+          const g = parseInt(value.slice(2, 4), 16);
+          const b = parseInt(value.slice(4, 6), 16);
+          return `rgba(${r}, ${g}, ${b}, ${clamp(alpha, 0, 1)})`;
         }
 
         function startAutopilot() {
@@ -260,6 +311,9 @@
 
         function waitForIdle(targetMap) { return targetMap.loaded() && targetMap.areTilesLoaded() ? Promise.resolve() : once(targetMap, 'idle'); }
         function once(targetMap, eventName) { return new Promise((resolve) => targetMap.once(eventName, resolve)); }
+        function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+        function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
+        function easeInOutCubic(t) { return t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
       }());
     </script>
   </body>
