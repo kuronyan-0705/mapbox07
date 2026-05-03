@@ -17,6 +17,7 @@
       #status { position: fixed; right: 18px; top: 16px; max-width: min(460px, calc(100vw - 36px)); padding: 8px 10px; border: 1px solid rgba(255, 66, 44, .34); background: rgba(0, 0, 0, .46); color: #ffe7df; font: 12px/1.5 system-ui, sans-serif; pointer-events: none; box-shadow: 0 0 22px rgba(255, 24, 24, .18); }
       body.ready #status { opacity: .38; }
       body.recording #status { display: none; }
+      body.error #status { opacity: 1; border-color: rgba(255, 88, 66, .8); }
       @media (max-width: 760px) { #title { white-space: normal; font-size: clamp(28px, 9vw, 48px); } }
     </style>
   </head>
@@ -44,10 +45,8 @@
         const preset = loadPreset(DEFAULT_PRESET);
         const status = document.getElementById('status');
         const titleCard = document.getElementById('title-card');
-        const title = document.getElementById('title');
-        const kicker = document.getElementById('kicker');
-        title.textContent = preset.pointTitle;
-        kicker.textContent = preset.pointKicker;
+        document.getElementById('title').textContent = preset.pointTitle;
+        document.getElementById('kicker').textContent = preset.pointKicker;
         document.title = preset.pointTitle;
 
         try {
@@ -59,21 +58,24 @@
           const map = new mapboxgl.Map({
             container: 'map', style: 'mapbox://styles/mapbox/dark-v11',
             center: preset.startCenter, zoom: preset.startZoom, pitch: 0, bearing: -25,
-            antialias: true, attributionControl: false, logoPosition: 'bottom-left'
+            antialias: true, attributionControl: false, logoPosition: 'bottom-left', failIfMajorPerformanceCaveat: false
           });
+          map.on('error', (event) => console.warn('Mapbox warning', event.error || event));
           map.dragRotate.disable();
           map.touchZoomRotate.disableRotation();
           await once(map, 'load');
+          status.textContent = 'Preparing 3D terrain...';
+          map.resize();
           tuneMap(map);
           addColorZones(map);
           addTerrain(map);
           addBuildings(map);
           hideModernPoiLabels(map);
           addPointEffects(map);
-          await waitForIdle(map);
+          await waitForIdleOrTimeout(map, 2600);
           document.body.classList.add('ready');
           status.textContent = 'Space: replay / R: replay';
-          await wait(700);
+          await wait(500);
           playPointFilm(map);
           window.addEventListener('keydown', (event) => {
             if (event.code === 'Space' || event.key.toLowerCase() === 'r') { event.preventDefault(); playPointFilm(map); }
@@ -89,13 +91,16 @@
           map.stop();
           map.jumpTo({ center: preset.startCenter, zoom: preset.startZoom, pitch: 0, bearing: -25 });
           setMarkerIntensity(map, 0);
-          await wait(400);
+          await wait(350);
+          status.textContent = 'Approaching target...';
           map.easeTo({ center: preset.pointLngLat, zoom: preset.approachZoom, pitch: 50, bearing: 45, duration: Math.round(preset.approachDuration * .52), easing: easeInOutCubic, essential: true });
           await once(map, 'moveend');
+          status.textContent = 'Descending to ground orbit...';
           map.easeTo({ center: preset.pointLngLat, zoom: preset.groundZoom, pitch: preset.pitch, bearing: 138, duration: Math.round(preset.approachDuration * .48), easing: easeInOutCubic, essential: true });
           await once(map, 'moveend');
           setMarkerIntensity(map, 1);
           await orbitGround(map);
+          status.textContent = 'Space: replay / R: replay';
           titleCard.classList.add('visible');
           pulseMarker(map);
         }
@@ -108,9 +113,7 @@
             const frame = (now) => {
               const progress = clamp((now - started) / preset.orbitDuration, 0, 1);
               const eased = easeInOutSine(progress);
-              const breathingZoom = preset.groundZoom + Math.sin(eased * Math.PI * 2.2) * .12;
-              const breathingPitch = preset.pitch - 2.4 + Math.sin(eased * Math.PI * 2) * 2.4;
-              map.jumpTo({ center: preset.pointLngLat, zoom: breathingZoom, pitch: breathingPitch, bearing: baseBearing + total * eased });
+              map.jumpTo({ center: preset.pointLngLat, zoom: preset.groundZoom + Math.sin(eased * Math.PI * 2.2) * .12, pitch: preset.pitch - 2.4 + Math.sin(eased * Math.PI * 2) * 2.4, bearing: baseBearing + total * eased });
               setMarkerIntensity(map, .84 + Math.pow(Math.sin(progress * Math.PI * 8), 8) * .16);
               if (progress < 1) requestAnimationFrame(frame); else resolve();
             };
@@ -124,33 +127,20 @@
           map.addLayer({ id: 'target-glow-core', type: 'circle', source: 'target-point', paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 2, 16, 9, 19, 18], 'circle-color': '#fff0dc', 'circle-opacity': 0, 'circle-blur': .18, 'circle-pitch-scale': 'map' } });
         }
 
-        function pulseMarker(map) {
-          const started = performance.now();
-          const frame = (now) => {
-            const pulse = .78 + Math.pow(Math.sin((now - started) / 1000 * 5.6), 8) * .22;
-            setMarkerIntensity(map, pulse);
-            requestAnimationFrame(frame);
-          };
-          requestAnimationFrame(frame);
-        }
-
-        function setMarkerIntensity(map, value) {
-          if (!map.getLayer('target-glow-outer')) return;
-          map.setPaintProperty('target-glow-outer', 'circle-opacity', .56 * value);
-          map.setPaintProperty('target-glow-core', 'circle-opacity', .96 * value);
-        }
-
+        function pulseMarker(map) { const started = performance.now(); const frame = (now) => { const pulse = .78 + Math.pow(Math.sin((now - started) / 1000 * 5.6), 8) * .22; setMarkerIntensity(map, pulse); requestAnimationFrame(frame); }; requestAnimationFrame(frame); }
+        function setMarkerIntensity(map, value) { if (!map.getLayer('target-glow-outer')) return; map.setPaintProperty('target-glow-outer', 'circle-opacity', .56 * value); map.setPaintProperty('target-glow-core', 'circle-opacity', .96 * value); }
         function tuneMap(map) { for (const layer of map.getStyle().layers || []) { if (layer.type === 'background') map.setPaintProperty(layer.id, 'background-color', '#182026'); if (layer.type === 'fill') { map.setPaintProperty(layer.id, 'fill-color', '#4b5357'); map.setPaintProperty(layer.id, 'fill-opacity', .88); } if (layer.type === 'line') { map.setPaintProperty(layer.id, 'line-color', '#7a8388'); map.setPaintProperty(layer.id, 'line-opacity', .6); } if (layer.type === 'symbol') { map.setPaintProperty(layer.id, 'text-color', '#c1c8cc'); map.setPaintProperty(layer.id, 'text-halo-color', '#20282d'); map.setPaintProperty(layer.id, 'text-halo-width', .8); map.setPaintProperty(layer.id, 'text-opacity', .72); map.setPaintProperty(layer.id, 'icon-opacity', .38); } } }
-        function addColorZones(map) { const firstSymbol = (map.getStyle().layers || []).find((layer) => layer.type === 'symbol'); const before = firstSymbol && firstSymbol.id; map.addLayer({ id: 'cinematic-water-color', type: 'fill', source: 'composite', 'source-layer': 'water', paint: { 'fill-color': '#21485a', 'fill-opacity': .82 } }, before); map.addLayer({ id: 'cinematic-forest-color', type: 'fill', source: 'composite', 'source-layer': 'landuse', filter: ['in', ['get', 'class'], ['literal', ['wood', 'forest', 'park', 'grass']]], paint: { 'fill-color': '#4d594a', 'fill-opacity': .36 } }, before); map.addLayer({ id: 'cinematic-city-color', type: 'fill', source: 'composite', 'source-layer': 'landuse', filter: ['in', ['get', 'class'], ['literal', ['residential', 'commercial', 'industrial', 'retail']]], paint: { 'fill-color': '#5e5a62', 'fill-opacity': .5 } }, before); }
-        function addTerrain(map) { map.addSource('mapbox-dem', { type: 'raster-dem', url: 'mapbox://mapbox.mapbox-terrain-dem-v1', tileSize: 512, maxzoom: 14 }); map.setTerrain({ source: 'mapbox-dem', exaggeration: preset.terrain }); map.addLayer({ id: 'cinematic-hillshade', type: 'hillshade', source: 'mapbox-dem', paint: { 'hillshade-shadow-color': '#11161a', 'hillshade-highlight-color': '#c0c8cc', 'hillshade-accent-color': '#758087', 'hillshade-illumination-direction': 315, 'hillshade-exaggeration': 1.0 } }); map.setFog({ color: 'rgb(28, 32, 36)', 'high-color': 'rgb(86, 92, 98)', 'horizon-blend': .08, 'space-color': 'rgb(5, 7, 9)', 'star-intensity': 0 }); }
-        function addBuildings(map) { const labelLayer = (map.getStyle().layers || []).find((layer) => layer.type === 'symbol' && layer.layout && layer.layout['text-field']); map.addLayer({ id: '3d-buildings-cinematic', source: 'composite', 'source-layer': 'building', filter: ['==', ['get', 'extrude'], 'true'], type: 'fill-extrusion', minzoom: 14, paint: { 'fill-extrusion-color': ['interpolate', ['linear'], ['zoom'], 14, '#3f2527', 17, '#6d3838'], 'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'height']], 'fill-extrusion-base': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'min_height']], 'fill-extrusion-opacity': .82, 'fill-extrusion-vertical-gradient': true } }, labelLayer && labelLayer.id); }
+        function addColorZones(map) { const firstSymbol = (map.getStyle().layers || []).find((layer) => layer.type === 'symbol'); const before = firstSymbol && firstSymbol.id; safeAddLayer(map, { id: 'cinematic-water-color', type: 'fill', source: 'composite', 'source-layer': 'water', paint: { 'fill-color': '#21485a', 'fill-opacity': .82 } }, before); safeAddLayer(map, { id: 'cinematic-forest-color', type: 'fill', source: 'composite', 'source-layer': 'landuse', filter: ['in', ['get', 'class'], ['literal', ['wood', 'forest', 'park', 'grass']]], paint: { 'fill-color': '#4d594a', 'fill-opacity': .36 } }, before); safeAddLayer(map, { id: 'cinematic-city-color', type: 'fill', source: 'composite', 'source-layer': 'landuse', filter: ['in', ['get', 'class'], ['literal', ['residential', 'commercial', 'industrial', 'retail']]], paint: { 'fill-color': '#5e5a62', 'fill-opacity': .5 } }, before); }
+        function addTerrain(map) { map.addSource('mapbox-dem', { type: 'raster-dem', url: 'mapbox://mapbox.mapbox-terrain-dem-v1', tileSize: 512, maxzoom: 14 }); map.setTerrain({ source: 'mapbox-dem', exaggeration: preset.terrain }); safeAddLayer(map, { id: 'cinematic-hillshade', type: 'hillshade', source: 'mapbox-dem', paint: { 'hillshade-shadow-color': '#11161a', 'hillshade-highlight-color': '#c0c8cc', 'hillshade-accent-color': '#758087', 'hillshade-illumination-direction': 315, 'hillshade-exaggeration': 1.0 } }); map.setFog({ color: 'rgb(28, 32, 36)', 'high-color': 'rgb(86, 92, 98)', 'horizon-blend': .08, 'space-color': 'rgb(5, 7, 9)', 'star-intensity': 0 }); }
+        function addBuildings(map) { const labelLayer = (map.getStyle().layers || []).find((layer) => layer.type === 'symbol' && layer.layout && layer.layout['text-field']); safeAddLayer(map, { id: '3d-buildings-cinematic', source: 'composite', 'source-layer': 'building', filter: ['==', ['get', 'extrude'], 'true'], type: 'fill-extrusion', minzoom: 14, paint: { 'fill-extrusion-color': ['interpolate', ['linear'], ['zoom'], 14, '#3f2527', 17, '#6d3838'], 'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'height']], 'fill-extrusion-base': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'min_height']], 'fill-extrusion-opacity': .82, 'fill-extrusion-vertical-gradient': true } }, labelLayer && labelLayer.id); }
+        function safeAddLayer(map, layer, before) { try { if (!map.getLayer(layer.id)) map.addLayer(layer, before); } catch (error) { console.warn(`Skipped layer ${layer.id}`, error); } }
         function hideModernPoiLabels(map) { const hidden = [/poi-label/, /transit-label/, /airport-label/, /settlement-subdivision-label/, /building-number-label/]; for (const layer of map.getStyle().layers || []) { if (layer.type === 'symbol' && hidden.some((pattern) => pattern.test(layer.id))) map.setLayoutProperty(layer.id, 'visibility', 'none'); } }
         function loadPreset(defaults) { let saved = {}; try { saved = JSON.parse(localStorage.getItem('pointDirectorPreset') || '{}'); } catch (error) {} const params = Object.fromEntries(new URLSearchParams(location.search).entries()); return normalizePreset({ ...defaults, ...saved, ...params }, defaults); }
         function normalizePreset(value, defaults) { const coord = (key) => Array.isArray(value[key]) ? value[key] : parseCoord(value[key], defaults[key]); const number = (key) => finiteNumber(value[key], defaults[key]); return { ...defaults, ...value, pointTitle: String(value.pointTitle || defaults.pointTitle), pointKicker: String(value.pointKicker || defaults.pointKicker), pointLngLat: coord('pointLngLat'), startCenter: coord('startCenter'), startZoom: number('startZoom'), approachZoom: number('approachZoom'), groundZoom: number('groundZoom'), pitch: number('pitch'), terrain: number('terrain'), approachDuration: number('approachDuration'), orbitDuration: number('orbitDuration'), orbitTurns: number('orbitTurns'), markerColor: String(value.markerColor || defaults.markerColor) }; }
         function parseCoord(value, fallback) { const parts = String(value || '').split(',').map((part) => Number(part.trim())); return parts.length === 2 && parts.every(Number.isFinite) ? parts : fallback; }
         function finiteNumber(value, fallback) { const number = Number(value); return Number.isFinite(number) ? number : fallback; }
         async function loadRemoteConfig() { try { const response = await fetch('/api/config', { cache: 'no-store' }); return response.ok ? response.json() : {}; } catch (error) { return {}; } }
-        function waitForIdle(map) { return map.loaded() && map.areTilesLoaded() ? Promise.resolve() : once(map, 'idle'); }
+        function waitForIdleOrTimeout(map, timeout) { return Promise.race([map.loaded() && map.areTilesLoaded() ? Promise.resolve() : once(map, 'idle'), wait(timeout)]); }
         function once(map, eventName) { return new Promise((resolve) => map.once(eventName, resolve)); }
         function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
         function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
