@@ -37,24 +37,20 @@
         if (query.get('record') === '1') document.body.classList.add('recording');
 
         const DEFAULT_PRESET = {
-          pointTitle: '一宮城跡',
-          pointKicker: 'Point / Japan descent',
-          pointLngLat: [140.3642, 35.3741],
-          startCenter: [139.7, 37.1],
-          startZoom: 4.75,
-          approachZoom: 13.7,
-          groundZoom: 16.75,
-          pitch: 68,
-          terrain: 2.1,
-          approachDuration: 8600,
-          orbitDuration: 9000,
-          orbitTurns: 1.15,
-          markerColor: '#ff1208'
+          pointTitle: '一宮城跡', pointKicker: 'Point / Japan descent',
+          pointLngLat: [140.3642, 35.3741], startCenter: [139.7, 37.1],
+          startZoom: 4.75, approachZoom: 13.7, groundZoom: 16.75,
+          pitch: 68, terrain: 2.1, approachDuration: 8600, orbitDuration: 9000,
+          orbitTurns: 1.15, markerColor: '#ff1208'
         };
 
         const preset = loadPreset(DEFAULT_PRESET);
         const status = document.getElementById('status');
         const titleCard = document.getElementById('title-card');
+        let cameraFrame = null;
+        let pulseFrame = null;
+        let hasStarted = false;
+
         document.getElementById('title').textContent = preset.pointTitle;
         document.getElementById('kicker').textContent = preset.pointKicker;
         document.title = preset.pointTitle;
@@ -68,16 +64,9 @@
           status.textContent = 'Loading Japan map...';
 
           const map = new mapboxgl.Map({
-            container: 'map',
-            style: 'mapbox://styles/mapbox/dark-v11',
-            center: preset.startCenter,
-            zoom: preset.startZoom,
-            pitch: 0,
-            bearing: 0,
-            antialias: true,
-            attributionControl: false,
-            logoPosition: 'bottom-left',
-            failIfMajorPerformanceCaveat: false
+            container: 'map', style: 'mapbox://styles/mapbox/dark-v11', center: preset.startCenter,
+            zoom: preset.startZoom, pitch: 0, bearing: 0, antialias: true,
+            attributionControl: false, logoPosition: 'bottom-left', failIfMajorPerformanceCaveat: false
           });
 
           map.on('error', (event) => {
@@ -89,12 +78,9 @@
           map.dragRotate.disable();
           map.touchZoomRotate.disableRotation();
 
-          await waitForStyle(map);
-          prepareMapLayers(map);
-          document.body.classList.add('ready');
-          status.textContent = 'Space: replay / R: replay';
-          await wait(850);
-          playPointFilm(map);
+          map.once('load', () => startExperience(map, 'load'));
+          map.once('style.load', () => startExperience(map, 'style'));
+          setTimeout(() => startExperience(map, 'timeout'), 4200);
 
           window.addEventListener('keydown', (event) => {
             const key = event.key.toLowerCase();
@@ -109,44 +95,89 @@
           document.body.classList.add('error');
         }
 
+        function startExperience(map, reason) {
+          if (hasStarted) return;
+          if (!map.getStyle() || !map.getStyle().layers || !map.getStyle().layers.length) {
+            if (reason !== 'timeout') return;
+          }
+          hasStarted = true;
+          try { prepareMapLayers(map); } catch (error) { console.warn('map decoration skipped', error); }
+          document.body.classList.add('ready');
+          status.textContent = 'Starting camera...';
+          map.resize();
+          setTimeout(() => playPointFilm(map), 700);
+        }
+
         async function playPointFilm(map) {
           titleCard.classList.remove('visible');
-          map.stop();
+          stopCamera();
           stopPulse();
           setMarkerIntensity(map, 0);
-
           map.jumpTo({ center: preset.startCenter, zoom: preset.startZoom, pitch: 0, bearing: 0 });
-          await wait(420);
+          await wait(350);
 
-          status.textContent = 'Descending from Japan overview...';
-          map.easeTo({
-            center: preset.pointLngLat,
-            zoom: preset.approachZoom,
-            pitch: 32,
-            bearing: 18,
-            duration: Math.round(preset.approachDuration * .62),
-            easing: easeInOutCubic,
-            essential: true
-          });
-          await moveEndOrTimeout(map, Math.round(preset.approachDuration * .62) + 1000);
+          status.textContent = 'Japan overview -> target';
+          await animateCamera(map, {
+            center: preset.startCenter, zoom: preset.startZoom, pitch: 0, bearing: 0
+          }, {
+            center: preset.pointLngLat, zoom: preset.approachZoom, pitch: 32, bearing: 18
+          }, Math.round(preset.approachDuration * .62));
 
-          status.textContent = 'Entering drone orbit...';
-          map.easeTo({
-            center: preset.pointLngLat,
-            zoom: preset.groundZoom,
-            pitch: preset.pitch,
-            bearing: 138,
-            duration: Math.round(preset.approachDuration * .38),
-            easing: easeInOutCubic,
-            essential: true
-          });
-          await moveEndOrTimeout(map, Math.round(preset.approachDuration * .38) + 1000);
+          status.textContent = 'Target -> drone orbit';
+          await animateCamera(map, {
+            center: preset.pointLngLat, zoom: preset.approachZoom, pitch: 32, bearing: 18
+          }, {
+            center: preset.pointLngLat, zoom: preset.groundZoom, pitch: preset.pitch, bearing: 138
+          }, Math.round(preset.approachDuration * .38));
 
           setMarkerIntensity(map, 1);
           await orbitGround(map);
           titleCard.classList.add('visible');
           status.textContent = 'Space: replay / R: replay';
           startPulse(map);
+        }
+
+        function animateCamera(map, from, to, duration) {
+          stopCamera();
+          const started = performance.now();
+          return new Promise((resolve) => {
+            const frame = (now) => {
+              const raw = clamp((now - started) / Math.max(1, duration), 0, 1);
+              const t = easeInOutCubic(raw);
+              map.jumpTo({
+                center: [lerp(from.center[0], to.center[0], t), lerp(from.center[1], to.center[1], t)],
+                zoom: lerp(from.zoom, to.zoom, t),
+                pitch: lerp(from.pitch, to.pitch, t),
+                bearing: lerpBearing(from.bearing, to.bearing, t)
+              });
+              if (raw < 1) cameraFrame = requestAnimationFrame(frame);
+              else { cameraFrame = null; resolve(); }
+            };
+            cameraFrame = requestAnimationFrame(frame);
+          });
+        }
+
+        function orbitGround(map) {
+          stopCamera();
+          const started = performance.now();
+          const baseBearing = map.getBearing();
+          const total = 360 * preset.orbitTurns;
+          return new Promise((resolve) => {
+            const frame = (now) => {
+              const progress = clamp((now - started) / preset.orbitDuration, 0, 1);
+              const eased = easeInOutSine(progress);
+              map.jumpTo({
+                center: preset.pointLngLat,
+                zoom: preset.groundZoom + Math.sin(eased * Math.PI * 2.2) * .08,
+                pitch: preset.pitch - 1.6 + Math.sin(eased * Math.PI * 2) * 1.6,
+                bearing: baseBearing + total * eased
+              });
+              setMarkerIntensity(map, .84 + Math.pow(Math.sin(progress * Math.PI * 8), 8) * .16);
+              if (progress < 1) cameraFrame = requestAnimationFrame(frame);
+              else { cameraFrame = null; resolve(); }
+            };
+            cameraFrame = requestAnimationFrame(frame);
+          });
         }
 
         function prepareMapLayers(map) {
@@ -160,24 +191,14 @@
 
         function tuneMap(map) {
           for (const layer of map.getStyle().layers || []) {
-            if (layer.type === 'background') map.setPaintProperty(layer.id, 'background-color', '#1e2a30');
-            if (layer.type === 'fill') {
-              map.setPaintProperty(layer.id, 'fill-color', '#687177');
-              map.setPaintProperty(layer.id, 'fill-opacity', .9);
-            }
-            if (layer.type === 'line') {
-              map.setPaintProperty(layer.id, 'line-color', '#a0a9ad');
-              map.setPaintProperty(layer.id, 'line-opacity', .72);
-            }
-            if (layer.type === 'symbol') {
-              map.setPaintProperty(layer.id, 'text-color', '#d8dee0');
-              map.setPaintProperty(layer.id, 'text-halo-color', '#293238');
-              map.setPaintProperty(layer.id, 'text-halo-width', .9);
-              map.setPaintProperty(layer.id, 'text-opacity', .8);
-              map.setPaintProperty(layer.id, 'icon-opacity', .4);
-            }
+            try {
+              if (layer.type === 'background') map.setPaintProperty(layer.id, 'background-color', '#1e2a30');
+              if (layer.type === 'fill') { map.setPaintProperty(layer.id, 'fill-color', '#687177'); map.setPaintProperty(layer.id, 'fill-opacity', .9); }
+              if (layer.type === 'line') { map.setPaintProperty(layer.id, 'line-color', '#a0a9ad'); map.setPaintProperty(layer.id, 'line-opacity', .72); }
+              if (layer.type === 'symbol') { map.setPaintProperty(layer.id, 'text-color', '#d8dee0'); map.setPaintProperty(layer.id, 'text-halo-color', '#293238'); map.setPaintProperty(layer.id, 'text-halo-width', .9); map.setPaintProperty(layer.id, 'text-opacity', .8); map.setPaintProperty(layer.id, 'icon-opacity', .4); }
+            } catch (error) { console.warn('style tune skipped', layer.id, error); }
           }
-          map.setFog({ color: 'rgb(34, 40, 45)', 'high-color': 'rgb(105, 114, 121)', 'horizon-blend': .06, 'space-color': 'rgb(3, 5, 8)', 'star-intensity': 0 });
+          try { map.setFog({ color: 'rgb(34, 40, 45)', 'high-color': 'rgb(105, 114, 121)', 'horizon-blend': .06, 'space-color': 'rgb(3, 5, 8)', 'star-intensity': 0 }); } catch (error) {}
         }
 
         function addColorZones(map) {
@@ -189,7 +210,7 @@
 
         function addTerrain(map) {
           if (!map.getSource('mapbox-dem')) map.addSource('mapbox-dem', { type: 'raster-dem', url: 'mapbox://mapbox.mapbox-terrain-dem-v1', tileSize: 512, maxzoom: 14 });
-          map.setTerrain({ source: 'mapbox-dem', exaggeration: preset.terrain });
+          try { map.setTerrain({ source: 'mapbox-dem', exaggeration: preset.terrain }); } catch (error) { console.warn('terrain skipped', error); }
           safeAddLayer(map, { id: 'cinematic-hillshade', type: 'hillshade', source: 'mapbox-dem', paint: { 'hillshade-shadow-color': '#171c20', 'hillshade-highlight-color': '#e1e7e9', 'hillshade-accent-color': '#8d989e', 'hillshade-illumination-direction': 315, 'hillshade-exaggeration': 1.1 } });
         }
 
@@ -205,7 +226,6 @@
           safeAddLayer(map, { id: 'target-glow-core', type: 'circle', source: 'target-point', paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 2, 10, 6, 14, 14, 17, 30], 'circle-color': '#fff0dc', 'circle-opacity': 0, 'circle-blur': .12, 'circle-pitch-scale': 'map' } });
         }
 
-        let pulseFrame = null;
         function startPulse(map) {
           stopPulse();
           const started = performance.now();
@@ -216,39 +236,18 @@
           };
           pulseFrame = requestAnimationFrame(frame);
         }
-        function stopPulse() { if (pulseFrame) cancelAnimationFrame(pulseFrame); pulseFrame = null; }
         function setMarkerIntensity(map, value) {
           if (!map.getLayer('target-glow-outer')) return;
           map.setPaintProperty('target-glow-outer', 'circle-opacity', .72 * value);
           map.setPaintProperty('target-glow-core', 'circle-opacity', .98 * value);
         }
-
-        function orbitGround(map) {
-          const started = performance.now();
-          const baseBearing = map.getBearing();
-          const total = 360 * preset.orbitTurns;
-          return new Promise((resolve) => {
-            const frame = (now) => {
-              const progress = clamp((now - started) / preset.orbitDuration, 0, 1);
-              const eased = easeInOutSine(progress);
-              map.jumpTo({
-                center: preset.pointLngLat,
-                zoom: preset.groundZoom + Math.sin(eased * Math.PI * 2.2) * .08,
-                pitch: preset.pitch - 1.6 + Math.sin(eased * Math.PI * 2) * 1.6,
-                bearing: baseBearing + total * eased
-              });
-              setMarkerIntensity(map, .84 + Math.pow(Math.sin(progress * Math.PI * 8), 8) * .16);
-              if (progress < 1) requestAnimationFrame(frame);
-              else resolve();
-            };
-            requestAnimationFrame(frame);
-          });
-        }
+        function stopCamera() { if (cameraFrame) cancelAnimationFrame(cameraFrame); cameraFrame = null; }
+        function stopPulse() { if (pulseFrame) cancelAnimationFrame(pulseFrame); pulseFrame = null; }
 
         function hideModernPoiLabels(map) {
           const hidden = [/poi-label/, /transit-label/, /airport-label/, /settlement-subdivision-label/, /building-number-label/];
           for (const layer of map.getStyle().layers || []) {
-            if (layer.type === 'symbol' && hidden.some((pattern) => pattern.test(layer.id))) map.setLayoutProperty(layer.id, 'visibility', 'none');
+            if (layer.type === 'symbol' && hidden.some((pattern) => pattern.test(layer.id))) safeSetLayout(map, layer.id, 'visibility', 'none');
           }
         }
 
@@ -261,8 +260,7 @@
         function normalizePreset(value, defaults) {
           const number = (key) => finiteNumber(value[key], defaults[key]);
           return {
-            ...defaults,
-            ...value,
+            ...defaults, ...value,
             pointTitle: String(value.pointTitle || defaults.pointTitle),
             pointKicker: String(value.pointKicker || defaults.pointKicker),
             pointLngLat: Array.isArray(value.pointLngLat) ? value.pointLngLat : parseCoord(value.pointLngLat, defaults.pointLngLat),
@@ -272,28 +270,24 @@
             groundZoom: clamp(number('groundZoom'), 15.2, 17.25),
             pitch: clamp(number('pitch'), 45, 74),
             terrain: number('terrain'),
-            approachDuration: number('approachDuration'),
-            orbitDuration: number('orbitDuration'),
-            orbitTurns: number('orbitTurns'),
+            approachDuration: clamp(number('approachDuration'), 2500, 18000),
+            orbitDuration: clamp(number('orbitDuration'), 2500, 20000),
+            orbitTurns: clamp(number('orbitTurns'), .25, 4),
             markerColor: String(value.markerColor || defaults.markerColor)
           };
         }
 
-        async function waitForStyle(map) {
-          if (map.isStyleLoaded()) return;
-          await Promise.race([once(map, 'load'), once(map, 'style.load'), wait(8500)]);
-          if (!map.getStyle()?.layers?.length) throw new Error('Map style did not load. Mapbox token とネットワークを確認してください。');
-        }
         async function loadRemoteConfig() { try { const response = await fetch('/api/config', { cache: 'no-store' }); return response.ok ? response.json() : {}; } catch (error) { return {}; } }
         function cleanMapboxToken(value) { const text = String(value || '').replace(/\\n/g, '').replace(/[\r\n\t]/g, '').trim().replace(/^['"]|['"]$/g, ''); const match = text.match(/pk\.[A-Za-z0-9._-]+/); return match ? match[0] : text; }
         function isValidMapboxToken(value) { return /^pk\.[A-Za-z0-9._-]+$/.test(value); }
         function safeAddLayer(map, layer, before) { try { if (!map.getLayer(layer.id)) map.addLayer(layer, before); } catch (error) { console.warn(`Skipped layer ${layer.id}`, error); } }
-        function moveEndOrTimeout(map, timeout) { return Promise.race([once(map, 'moveend'), wait(timeout)]); }
-        function once(map, eventName) { return new Promise((resolve) => map.once(eventName, resolve)); }
+        function safeSetLayout(map, id, key, value) { try { map.setLayoutProperty(id, key, value); } catch (error) {} }
         function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
         function parseCoord(value, fallback) { const parts = String(value || '').split(',').map((part) => Number(part.trim())); return parts.length === 2 && parts.every(Number.isFinite) ? parts : fallback; }
         function finiteNumber(value, fallback) { const number = Number(value); return Number.isFinite(number) ? number : fallback; }
         function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
+        function lerp(a, b, t) { return a + (b - a) * t; }
+        function lerpBearing(a, b, t) { const delta = ((((b - a) % 360) + 540) % 360) - 180; return a + delta * t; }
         function easeInOutCubic(t) { return t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
         function easeInOutSine(t) { return -(Math.cos(Math.PI * t) - 1) / 2; }
       }());
