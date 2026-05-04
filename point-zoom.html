@@ -35,228 +35,58 @@
     (async function boot() {
       const query = new URLSearchParams(location.search);
       if (query.get('record') === '1') document.body.classList.add('recording');
-
-      const DEFAULT_PRESET = {
-        pointTitle: '一宮城跡', pointKicker: 'Point / Center zoom', pointLngLat: [140.3642, 35.3741],
-        startZoom: 4.75, groundZoom: 16.65, pitch: 67, terrain: 2.1,
-        approachDuration: 9000, orbitDuration: 9200, orbitTurns: 1.05, markerColor: '#ff1208',
-        overlayImage: '', overlayCoords: null, overlayOpacity: .72
-      };
-      const FACILITY_POINTS = [
+      const DEFAULT_FACILITIES = [
         { name: '一宮小', type: 'school', coordinates: [140.361564, 35.37359] },
         { name: '玉前神社', type: 'shrine', coordinates: [140.360626, 35.376228] },
         { name: '釣ヶ崎海岸', type: 'coast', coordinates: [140.389444, 35.336944] }
       ];
+      const DEFAULT_PRESET = {
+        pointTitle: '一宮城跡', pointKicker: 'Point / Center zoom', pointLngLat: [140.3642, 35.3741],
+        startZoom: 4.75, groundZoom: 16.65, pitch: 67, terrain: 2.1,
+        approachDuration: 9000, orbitDuration: 9200, orbitTurns: 1.05, markerColor: '#ff1208',
+        overlayImage: '', overlayCoords: null, overlayOpacity: .72, facilities: DEFAULT_FACILITIES
+      };
       const preset = loadPreset(DEFAULT_PRESET);
       const status = document.getElementById('status');
       const titleCard = document.getElementById('title-card');
       let cameraFrame = null;
       let pulseFrame = null;
       let started = false;
-
       document.getElementById('title').textContent = preset.pointTitle;
       document.getElementById('kicker').textContent = preset.pointKicker;
       document.title = preset.pointTitle;
-
       try {
         const config = await loadRemoteConfig();
         const token = cleanMapboxToken(query.get('token') || window.MAPBOX_TOKEN || config.mapboxToken || '');
         if (!isValidMapboxToken(token)) throw new Error('Mapbox token is invalid. Vercel の MAPBOX_TOKEN には pk. から始まる値だけを入れてください。');
         mapboxgl.accessToken = token;
-        status.textContent = 'Loading centered map...';
-
-        const map = new mapboxgl.Map({
-          container: 'map', style: 'mapbox://styles/mapbox/dark-v11', center: preset.pointLngLat,
-          zoom: preset.startZoom, pitch: 0, bearing: -8, antialias: true,
-          attributionControl: false, logoPosition: 'bottom-left', failIfMajorPerformanceCaveat: false
-        });
-        map.on('error', (event) => {
-          const message = event.error && event.error.message ? event.error.message : 'Mapbox error';
-          status.textContent = 'Map warning: ' + message;
-          console.warn(event.error || event);
-        });
+        const map = new mapboxgl.Map({ container: 'map', style: 'mapbox://styles/mapbox/dark-v11', center: preset.pointLngLat, zoom: preset.startZoom, pitch: 0, bearing: -8, antialias: true, attributionControl: false, logoPosition: 'bottom-left', failIfMajorPerformanceCaveat: false });
+        map.on('error', (event) => { const message = event.error && event.error.message ? event.error.message : 'Mapbox error'; status.textContent = 'Map warning: ' + message; console.warn(event.error || event); });
         map.dragRotate.disable();
         map.touchZoomRotate.disableRotation();
         map.once('load', () => start(map, 'load'));
         map.once('style.load', () => start(map, 'style'));
         setTimeout(() => start(map, 'timeout'), 4200);
-        window.addEventListener('keydown', (event) => {
-          const key = event.key.toLowerCase();
-          if (event.code === 'Space' || key === 'r') { event.preventDefault(); play(map); }
-          if (key === 'm') { event.preventDefault(); toggleOverlay(map); }
-        });
-      } catch (error) {
-        console.error(error);
-        status.textContent = error.message;
-        document.body.classList.add('error');
-      }
-
-      function start(map, reason) {
-        if (started) return;
-        if (!map.getStyle()?.layers?.length && reason !== 'timeout') return;
-        started = true;
-        try { decorateMap(map); } catch (error) { console.warn('map decoration skipped', error); }
-        document.body.classList.add('ready');
-        map.resize();
-        status.textContent = 'Starting camera...';
-        setTimeout(() => play(map), 700);
-      }
-
-      async function play(map) {
-        titleCard.classList.remove('visible');
-        stopCamera();
-        stopPulse();
-        setMarkerIntensity(map, 0);
-        setOverlayOpacity(map, 0);
-        map.jumpTo({ center: preset.pointLngLat, zoom: preset.startZoom, pitch: 0, bearing: -8 });
-        await wait(350);
-        status.textContent = 'Centered zoom -> orbit';
-        await descendAndOrbit(map);
-        titleCard.classList.add('visible');
-        status.textContent = 'Space: replay / R: replay / M: overlay';
-        startPulse(map);
-      }
-
-      function descendAndOrbit(map) {
-        stopCamera();
-        const startTime = performance.now();
-        const descendMs = preset.approachDuration;
-        const orbitMs = preset.orbitDuration;
-        const totalMs = descendMs + orbitMs;
-        const orbitStartBearing = 132;
-        const orbitDegrees = 360 * preset.orbitTurns;
-        return new Promise((resolve) => {
-          const frame = (now) => {
-            const elapsed = now - startTime;
-            if (elapsed <= descendMs) {
-              const raw = clamp(elapsed / descendMs, 0, 1);
-              const zoomT = easeInOutCubic(raw);
-              const tiltT = smoothstep(.58, 1, raw);
-              const glowT = smoothstep(.72, 1, raw);
-              map.jumpTo({
-                center: preset.pointLngLat,
-                zoom: lerp(preset.startZoom, preset.groundZoom, zoomT),
-                pitch: lerp(0, preset.pitch, tiltT),
-                bearing: lerpBearing(-8, orbitStartBearing, tiltT)
-              });
-              setMarkerIntensity(map, glowT);
-            } else {
-              const raw = clamp((elapsed - descendMs) / orbitMs, 0, 1);
-              const t = easeInOutSine(raw);
-              const settle = smoothstep(0, .18, raw);
-              map.jumpTo({
-                center: preset.pointLngLat,
-                zoom: preset.groundZoom + Math.sin(t * Math.PI * 2.1) * .07,
-                pitch: preset.pitch - 1.2 + Math.sin(t * Math.PI * 2) * 1.2 * settle,
-                bearing: orbitStartBearing + orbitDegrees * t
-              });
-              setMarkerIntensity(map, .84 + Math.pow(Math.sin(raw * Math.PI * 8), 8) * .16);
-              setOverlayOpacity(map, preset.overlayOpacity * smoothstep(.08, .32, raw));
-            }
-            if (elapsed < totalMs) cameraFrame = requestAnimationFrame(frame);
-            else { cameraFrame = null; resolve(); }
-          };
-          cameraFrame = requestAnimationFrame(frame);
-        });
-      }
-
-      function decorateMap(map) {
-        tuneMap(map);
-        addColorZones(map);
-        addTerrain(map);
-        addBuildings(map);
-        hideModernPoiLabels(map);
-        addPointEffects(map);
-        addFacilityMarkers(map);
-        addContextOverlay(map);
-      }
-      function tuneMap(map) {
-        for (const layer of map.getStyle().layers || []) {
-          try {
-            if (layer.type === 'background') map.setPaintProperty(layer.id, 'background-color', '#1e2a30');
-            if (layer.type === 'fill') { map.setPaintProperty(layer.id, 'fill-color', '#687177'); map.setPaintProperty(layer.id, 'fill-opacity', .9); }
-            if (layer.type === 'line') { map.setPaintProperty(layer.id, 'line-color', '#a0a9ad'); map.setPaintProperty(layer.id, 'line-opacity', .72); }
-            if (layer.type === 'symbol') { map.setPaintProperty(layer.id, 'text-color', '#d8dee0'); map.setPaintProperty(layer.id, 'text-halo-color', '#293238'); map.setPaintProperty(layer.id, 'text-halo-width', .9); map.setPaintProperty(layer.id, 'text-opacity', .8); map.setPaintProperty(layer.id, 'icon-opacity', .4); }
-          } catch (error) {}
-        }
-        try { map.setFog({ color: 'rgb(34, 40, 45)', 'high-color': 'rgb(105, 114, 121)', 'horizon-blend': .06, 'space-color': 'rgb(3, 5, 8)', 'star-intensity': 0 }); } catch (error) {}
-      }
-      function addColorZones(map) {
-        const before = (map.getStyle().layers || []).find((layer) => layer.type === 'symbol')?.id;
-        safeAddLayer(map, { id: 'cinematic-water-color', type: 'fill', source: 'composite', 'source-layer': 'water', paint: { 'fill-color': '#28576a', 'fill-opacity': .82 } }, before);
-        safeAddLayer(map, { id: 'cinematic-forest-color', type: 'fill', source: 'composite', 'source-layer': 'landuse', filter: ['in', ['get', 'class'], ['literal', ['wood', 'forest', 'park', 'grass']]], paint: { 'fill-color': '#66705d', 'fill-opacity': .4 } }, before);
-        safeAddLayer(map, { id: 'cinematic-city-color', type: 'fill', source: 'composite', 'source-layer': 'landuse', filter: ['in', ['get', 'class'], ['literal', ['residential', 'commercial', 'industrial', 'retail']]], paint: { 'fill-color': '#756f78', 'fill-opacity': .5 } }, before);
-      }
-      function addTerrain(map) {
-        if (!map.getSource('mapbox-dem')) map.addSource('mapbox-dem', { type: 'raster-dem', url: 'mapbox://mapbox.mapbox-terrain-dem-v1', tileSize: 512, maxzoom: 14 });
-        try { map.setTerrain({ source: 'mapbox-dem', exaggeration: preset.terrain }); } catch (error) {}
-        safeAddLayer(map, { id: 'cinematic-hillshade', type: 'hillshade', source: 'mapbox-dem', paint: { 'hillshade-shadow-color': '#171c20', 'hillshade-highlight-color': '#e1e7e9', 'hillshade-accent-color': '#8d989e', 'hillshade-illumination-direction': 315, 'hillshade-exaggeration': 1.1 } });
-      }
-      function addBuildings(map) {
-        const before = (map.getStyle().layers || []).find((layer) => layer.type === 'symbol' && layer.layout && layer.layout['text-field'])?.id;
-        safeAddLayer(map, { id: '3d-buildings-cinematic', source: 'composite', 'source-layer': 'building', filter: ['==', ['get', 'extrude'], 'true'], type: 'fill-extrusion', minzoom: 14, paint: { 'fill-extrusion-color': ['interpolate', ['linear'], ['zoom'], 14, '#5a4041', 17, '#8a5654'], 'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'height']], 'fill-extrusion-base': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'min_height']], 'fill-extrusion-opacity': .86, 'fill-extrusion-vertical-gradient': true } }, before);
-      }
-      function addPointEffects(map) {
-        if (map.getSource('target-point')) return;
-        map.addSource('target-point', { type: 'geojson', data: { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: preset.pointLngLat } }] } });
-        safeAddLayer(map, { id: 'target-glow-outer', type: 'circle', source: 'target-point', paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 5, 10, 18, 14, 40, 17, 96], 'circle-color': preset.markerColor, 'circle-opacity': 0, 'circle-blur': .72, 'circle-pitch-scale': 'map' } });
-        safeAddLayer(map, { id: 'target-glow-core', type: 'circle', source: 'target-point', paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 2, 10, 6, 14, 14, 17, 30], 'circle-color': '#fff0dc', 'circle-opacity': 0, 'circle-blur': .12, 'circle-pitch-scale': 'map' } });
-      }
-      function addFacilityMarkers(map) {
-        if (map.getSource('facility-points')) return;
-        map.addSource('facility-points', { type: 'geojson', data: { type: 'FeatureCollection', features: FACILITY_POINTS.map((item) => ({ type: 'Feature', properties: { name: item.name, type: item.type }, geometry: { type: 'Point', coordinates: item.coordinates } })) } });
-        safeAddLayer(map, { id: 'facility-glow', type: 'circle', source: 'facility-points', paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 4, 13, 16, 17, 34], 'circle-color': '#ff3a22', 'circle-blur': .68, 'circle-opacity': ['interpolate', ['linear'], ['zoom'], 8, 0, 10, .42, 14, .72] } });
-        safeAddLayer(map, { id: 'facility-dot', type: 'circle', source: 'facility-points', paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 2, 13, 5, 17, 8], 'circle-color': '#fff0dc', 'circle-stroke-color': '#ff2a16', 'circle-stroke-width': 2, 'circle-opacity': ['interpolate', ['linear'], ['zoom'], 8, 0, 10, .9] } });
-        safeAddLayer(map, { id: 'facility-label', type: 'symbol', source: 'facility-points', layout: { 'text-field': ['get', 'name'], 'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'], 'text-size': ['interpolate', ['linear'], ['zoom'], 10, 12, 15, 17], 'text-offset': [0, 1.25], 'text-anchor': 'top', 'text-allow-overlap': false }, paint: { 'text-color': '#fff3eb', 'text-halo-color': '#2a0906', 'text-halo-width': 1.4, 'text-opacity': ['interpolate', ['linear'], ['zoom'], 9, 0, 11, .95] } });
-      }
-      function addContextOverlay(map) {
-        if (!preset.overlayImage || !Array.isArray(preset.overlayCoords) || preset.overlayCoords.length !== 4) return;
-        if (!map.getSource('context-overlay')) map.addSource('context-overlay', { type: 'image', url: preset.overlayImage, coordinates: preset.overlayCoords });
-        safeAddLayer(map, { id: 'context-overlay-layer', type: 'raster', source: 'context-overlay', paint: { 'raster-opacity': 0, 'raster-fade-duration': 600, 'raster-brightness-min': .12, 'raster-brightness-max': .92, 'raster-contrast': .18, 'raster-saturation': -.18 } });
-      }
+        window.addEventListener('keydown', (event) => { const key = event.key.toLowerCase(); if (event.code === 'Space' || key === 'r') { event.preventDefault(); play(map); } if (key === 'm') { event.preventDefault(); toggleOverlay(map); } });
+      } catch (error) { console.error(error); status.textContent = error.message; document.body.classList.add('error'); }
+      function start(map, reason) { if (started) return; if (!map.getStyle()?.layers?.length && reason !== 'timeout') return; started = true; try { decorateMap(map); } catch (error) { console.warn('map decoration skipped', error); } document.body.classList.add('ready'); map.resize(); status.textContent = 'Starting camera...'; setTimeout(() => play(map), 700); }
+      async function play(map) { titleCard.classList.remove('visible'); stopCamera(); stopPulse(); setMarkerIntensity(map, 0); setOverlayOpacity(map, 0); map.jumpTo({ center: preset.pointLngLat, zoom: preset.startZoom, pitch: 0, bearing: -8 }); await wait(350); status.textContent = 'Centered zoom -> orbit'; await descendAndOrbit(map); titleCard.classList.add('visible'); status.textContent = 'Space: replay / R: replay / M: overlay'; startPulse(map); }
+      function descendAndOrbit(map) { stopCamera(); const startTime = performance.now(); const descendMs = preset.approachDuration; const orbitMs = preset.orbitDuration; const totalMs = descendMs + orbitMs; const orbitStartBearing = 132; const orbitDegrees = 360 * preset.orbitTurns; return new Promise((resolve) => { const frame = (now) => { const elapsed = now - startTime; if (elapsed <= descendMs) { const raw = clamp(elapsed / descendMs, 0, 1); const zoomT = easeInOutCubic(raw); const tiltT = smoothstep(.58, 1, raw); const glowT = smoothstep(.72, 1, raw); map.jumpTo({ center: preset.pointLngLat, zoom: lerp(preset.startZoom, preset.groundZoom, zoomT), pitch: lerp(0, preset.pitch, tiltT), bearing: lerpBearing(-8, orbitStartBearing, tiltT) }); setMarkerIntensity(map, glowT); } else { const raw = clamp((elapsed - descendMs) / orbitMs, 0, 1); const t = easeInOutSine(raw); const settle = smoothstep(0, .18, raw); map.jumpTo({ center: preset.pointLngLat, zoom: preset.groundZoom + Math.sin(t * Math.PI * 2.1) * .07, pitch: preset.pitch - 1.2 + Math.sin(t * Math.PI * 2) * 1.2 * settle, bearing: orbitStartBearing + orbitDegrees * t }); setMarkerIntensity(map, .84 + Math.pow(Math.sin(raw * Math.PI * 8), 8) * .16); setOverlayOpacity(map, preset.overlayOpacity * smoothstep(.08, .32, raw)); } if (elapsed < totalMs) cameraFrame = requestAnimationFrame(frame); else { cameraFrame = null; resolve(); } }; cameraFrame = requestAnimationFrame(frame); }); }
+      function decorateMap(map) { tuneMap(map); addColorZones(map); addTerrain(map); addBuildings(map); hideModernPoiLabels(map); addPointEffects(map); addFacilityMarkers(map); addContextOverlay(map); }
+      function tuneMap(map) { for (const layer of map.getStyle().layers || []) { try { if (layer.type === 'background') map.setPaintProperty(layer.id, 'background-color', '#1e2a30'); if (layer.type === 'fill') { map.setPaintProperty(layer.id, 'fill-color', '#687177'); map.setPaintProperty(layer.id, 'fill-opacity', .9); } if (layer.type === 'line') { map.setPaintProperty(layer.id, 'line-color', '#a0a9ad'); map.setPaintProperty(layer.id, 'line-opacity', .72); } if (layer.type === 'symbol') { map.setPaintProperty(layer.id, 'text-color', '#d8dee0'); map.setPaintProperty(layer.id, 'text-halo-color', '#293238'); map.setPaintProperty(layer.id, 'text-halo-width', .9); map.setPaintProperty(layer.id, 'text-opacity', .8); map.setPaintProperty(layer.id, 'icon-opacity', .4); } } catch (error) {} } try { map.setFog({ color: 'rgb(34, 40, 45)', 'high-color': 'rgb(105, 114, 121)', 'horizon-blend': .06, 'space-color': 'rgb(3, 5, 8)', 'star-intensity': 0 }); } catch (error) {} }
+      function addColorZones(map) { const before = (map.getStyle().layers || []).find((layer) => layer.type === 'symbol')?.id; safeAddLayer(map, { id: 'cinematic-water-color', type: 'fill', source: 'composite', 'source-layer': 'water', paint: { 'fill-color': '#28576a', 'fill-opacity': .82 } }, before); safeAddLayer(map, { id: 'cinematic-forest-color', type: 'fill', source: 'composite', 'source-layer': 'landuse', filter: ['in', ['get', 'class'], ['literal', ['wood', 'forest', 'park', 'grass']]], paint: { 'fill-color': '#66705d', 'fill-opacity': .4 } }, before); safeAddLayer(map, { id: 'cinematic-city-color', type: 'fill', source: 'composite', 'source-layer': 'landuse', filter: ['in', ['get', 'class'], ['literal', ['residential', 'commercial', 'industrial', 'retail']]], paint: { 'fill-color': '#756f78', 'fill-opacity': .5 } }, before); }
+      function addTerrain(map) { if (!map.getSource('mapbox-dem')) map.addSource('mapbox-dem', { type: 'raster-dem', url: 'mapbox://mapbox.mapbox-terrain-dem-v1', tileSize: 512, maxzoom: 14 }); try { map.setTerrain({ source: 'mapbox-dem', exaggeration: preset.terrain }); } catch (error) {} safeAddLayer(map, { id: 'cinematic-hillshade', type: 'hillshade', source: 'mapbox-dem', paint: { 'hillshade-shadow-color': '#171c20', 'hillshade-highlight-color': '#e1e7e9', 'hillshade-accent-color': '#8d989e', 'hillshade-illumination-direction': 315, 'hillshade-exaggeration': 1.1 } }); }
+      function addBuildings(map) { const before = (map.getStyle().layers || []).find((layer) => layer.type === 'symbol' && layer.layout && layer.layout['text-field'])?.id; safeAddLayer(map, { id: '3d-buildings-cinematic', source: 'composite', 'source-layer': 'building', filter: ['==', ['get', 'extrude'], 'true'], type: 'fill-extrusion', minzoom: 14, paint: { 'fill-extrusion-color': ['interpolate', ['linear'], ['zoom'], 14, '#5a4041', 17, '#8a5654'], 'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'height']], 'fill-extrusion-base': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, ['get', 'min_height']], 'fill-extrusion-opacity': .86, 'fill-extrusion-vertical-gradient': true } }, before); }
+      function addPointEffects(map) { if (map.getSource('target-point')) return; map.addSource('target-point', { type: 'geojson', data: { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: preset.pointLngLat } }] } }); safeAddLayer(map, { id: 'target-glow-outer', type: 'circle', source: 'target-point', paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 5, 10, 18, 14, 40, 17, 96], 'circle-color': preset.markerColor, 'circle-opacity': 0, 'circle-blur': .72, 'circle-pitch-scale': 'map' } }); safeAddLayer(map, { id: 'target-glow-core', type: 'circle', source: 'target-point', paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 2, 10, 6, 14, 14, 17, 30], 'circle-color': '#fff0dc', 'circle-opacity': 0, 'circle-blur': .12, 'circle-pitch-scale': 'map' } }); }
+      function addFacilityMarkers(map) { if (map.getSource('facility-points')) return; const facilities = Array.isArray(preset.facilities) && preset.facilities.length ? preset.facilities : DEFAULT_FACILITIES; map.addSource('facility-points', { type: 'geojson', data: { type: 'FeatureCollection', features: facilities.filter((item) => item.name && Array.isArray(item.coordinates)).map((item) => ({ type: 'Feature', properties: { name: item.name, type: item.type || '' }, geometry: { type: 'Point', coordinates: item.coordinates } })) } }); safeAddLayer(map, { id: 'facility-glow', type: 'circle', source: 'facility-points', paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 4, 13, 16, 17, 34], 'circle-color': '#ff3a22', 'circle-blur': .68, 'circle-opacity': ['interpolate', ['linear'], ['zoom'], 8, 0, 10, .42, 14, .72] } }); safeAddLayer(map, { id: 'facility-dot', type: 'circle', source: 'facility-points', paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 2, 13, 5, 17, 8], 'circle-color': '#fff0dc', 'circle-stroke-color': '#ff2a16', 'circle-stroke-width': 2, 'circle-opacity': ['interpolate', ['linear'], ['zoom'], 8, 0, 10, .9] } }); safeAddLayer(map, { id: 'facility-label', type: 'symbol', source: 'facility-points', layout: { 'text-field': ['get', 'name'], 'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'], 'text-size': ['interpolate', ['linear'], ['zoom'], 10, 12, 15, 17], 'text-offset': [0, 1.25], 'text-anchor': 'top', 'text-allow-overlap': false }, paint: { 'text-color': '#fff3eb', 'text-halo-color': '#2a0906', 'text-halo-width': 1.4, 'text-opacity': ['interpolate', ['linear'], ['zoom'], 9, 0, 11, .95] } }); }
+      function addContextOverlay(map) { if (!preset.overlayImage || !Array.isArray(preset.overlayCoords) || preset.overlayCoords.length !== 4) return; if (!map.getSource('context-overlay')) map.addSource('context-overlay', { type: 'image', url: preset.overlayImage, coordinates: preset.overlayCoords }); safeAddLayer(map, { id: 'context-overlay-layer', type: 'raster', source: 'context-overlay', paint: { 'raster-opacity': 0, 'raster-fade-duration': 600, 'raster-brightness-min': .12, 'raster-brightness-max': .92, 'raster-contrast': .18, 'raster-saturation': -.18 } }); }
       function setOverlayOpacity(map, opacity) { if (map.getLayer('context-overlay-layer')) map.setPaintProperty('context-overlay-layer', 'raster-opacity', clamp(opacity, 0, 1)); }
-      function toggleOverlay(map) {
-        if (!map.getLayer('context-overlay-layer')) return;
-        const current = Number(map.getPaintProperty('context-overlay-layer', 'raster-opacity')) || 0;
-        setOverlayOpacity(map, current > .05 ? 0 : preset.overlayOpacity);
-      }
-      function startPulse(map) {
-        stopPulse();
-        const startedAt = performance.now();
-        const frame = (now) => {
-          const pulse = .78 + Math.pow(Math.sin((now - startedAt) / 1000 * 5.6), 8) * .22;
-          setMarkerIntensity(map, pulse);
-          pulseFrame = requestAnimationFrame(frame);
-        };
-        pulseFrame = requestAnimationFrame(frame);
-      }
-      function setMarkerIntensity(map, value) {
-        if (!map.getLayer('target-glow-outer')) return;
-        map.setPaintProperty('target-glow-outer', 'circle-opacity', .72 * value);
-        map.setPaintProperty('target-glow-core', 'circle-opacity', .98 * value);
-      }
-      function hideModernPoiLabels(map) {
-        const hidden = [/poi-label/, /transit-label/, /airport-label/, /settlement-subdivision-label/, /building-number-label/];
-        for (const layer of map.getStyle().layers || []) if (layer.type === 'symbol' && hidden.some((pattern) => pattern.test(layer.id))) safeSetLayout(map, layer.id, 'visibility', 'none');
-      }
-      function loadPreset(defaults) {
-        let saved = {};
-        try { saved = JSON.parse(localStorage.getItem('pointDirectorPreset') || '{}'); } catch (error) {}
-        const params = Object.fromEntries(new URLSearchParams(location.search).entries());
-        return normalizePreset({ ...defaults, ...saved, ...params }, defaults);
-      }
-      function normalizePreset(value, defaults) {
-        const number = (key) => finiteNumber(value[key], defaults[key]);
-        return { ...defaults, ...value,
-          pointTitle: String(value.pointTitle || defaults.pointTitle), pointKicker: String(value.pointKicker || defaults.pointKicker),
-          pointLngLat: Array.isArray(value.pointLngLat) ? value.pointLngLat : parseCoord(value.pointLngLat, defaults.pointLngLat),
-          startZoom: clamp(number('startZoom'), 3.4, 6.4), groundZoom: clamp(number('groundZoom'), 15.2, 17.25),
-          pitch: clamp(number('pitch'), 45, 74), terrain: number('terrain'),
-          approachDuration: clamp(number('approachDuration'), 3500, 18000), orbitDuration: clamp(number('orbitDuration'), 2500, 20000),
-          orbitTurns: clamp(number('orbitTurns'), .25, 4), markerColor: String(value.markerColor || defaults.markerColor),
-          overlayImage: String(value.overlayImage || ''), overlayCoords: parseOverlayCoords(value.overlayCoords), overlayOpacity: clamp(number('overlayOpacity'), 0, 1)
-        };
-      }
+      function toggleOverlay(map) { if (!map.getLayer('context-overlay-layer')) return; const current = Number(map.getPaintProperty('context-overlay-layer', 'raster-opacity')) || 0; setOverlayOpacity(map, current > .05 ? 0 : preset.overlayOpacity); }
+      function startPulse(map) { stopPulse(); const startedAt = performance.now(); const frame = (now) => { const pulse = .78 + Math.pow(Math.sin((now - startedAt) / 1000 * 5.6), 8) * .22; setMarkerIntensity(map, pulse); pulseFrame = requestAnimationFrame(frame); }; pulseFrame = requestAnimationFrame(frame); }
+      function setMarkerIntensity(map, value) { if (!map.getLayer('target-glow-outer')) return; map.setPaintProperty('target-glow-outer', 'circle-opacity', .72 * value); map.setPaintProperty('target-glow-core', 'circle-opacity', .98 * value); }
+      function hideModernPoiLabels(map) { const hidden = [/poi-label/, /transit-label/, /airport-label/, /settlement-subdivision-label/, /building-number-label/]; for (const layer of map.getStyle().layers || []) if (layer.type === 'symbol' && hidden.some((pattern) => pattern.test(layer.id))) safeSetLayout(map, layer.id, 'visibility', 'none'); }
+      function loadPreset(defaults) { let saved = {}; try { saved = JSON.parse(localStorage.getItem('pointDirectorPreset') || '{}'); } catch (error) {} const params = Object.fromEntries(new URLSearchParams(location.search).entries()); return normalizePreset({ ...defaults, ...saved, ...params }, defaults); }
+      function normalizePreset(value, defaults) { const number = (key) => finiteNumber(value[key], defaults[key]); return { ...defaults, ...value, pointTitle: String(value.pointTitle || defaults.pointTitle), pointKicker: String(value.pointKicker || defaults.pointKicker), pointLngLat: Array.isArray(value.pointLngLat) ? value.pointLngLat : parseCoord(value.pointLngLat, defaults.pointLngLat), startZoom: clamp(number('startZoom'), 3.4, 6.4), groundZoom: clamp(number('groundZoom'), 15.2, 17.25), pitch: clamp(number('pitch'), 45, 74), terrain: number('terrain'), approachDuration: clamp(number('approachDuration'), 3500, 18000), orbitDuration: clamp(number('orbitDuration'), 2500, 20000), orbitTurns: clamp(number('orbitTurns'), .25, 4), markerColor: String(value.markerColor || defaults.markerColor), overlayImage: String(value.overlayImage || ''), overlayCoords: parseOverlayCoords(value.overlayCoords), overlayOpacity: clamp(number('overlayOpacity'), 0, 1), facilities: Array.isArray(value.facilities) ? value.facilities : defaults.facilities }; }
       async function loadRemoteConfig() { try { const response = await fetch('/api/config', { cache: 'no-store' }); return response.ok ? response.json() : {}; } catch (error) { return {}; } }
       function cleanMapboxToken(value) { const text = String(value || '').replace(/\\n/g, '').replace(/[\r\n\t]/g, '').trim().replace(/^['"]|['"]$/g, ''); const match = text.match(/pk\.[A-Za-z0-9._-]+/); return match ? match[0] : text; }
       function isValidMapboxToken(value) { return /^pk\.[A-Za-z0-9._-]+$/.test(value); }
