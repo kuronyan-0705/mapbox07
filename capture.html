@@ -1,8 +1,7 @@
 <!doctype html>
 <html lang="ja">
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <title>ブラウザ録画ダウンロード</title>
     <style>
       html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #000; color: #fff1ec; font-family: system-ui, "Yu Gothic", Meiryo, sans-serif; }
@@ -11,126 +10,83 @@
       body.playing #stageWrap { opacity: 1; }
       #overlay { position: fixed; inset: 0; z-index: 3; display: grid; place-items: center; background: radial-gradient(circle at 50% 35%, #20272b 0, #030405 62%); }
       body.playing #overlay { opacity: 0; pointer-events: none; transition: opacity 500ms ease; }
-      #panel { width: min(660px, calc(100vw - 36px)); padding: 26px; border: 1px solid rgba(255, 66, 44, .44); border-radius: 8px; background: rgba(6, 8, 10, .94); box-shadow: 0 0 60px rgba(255, 36, 22, .2); }
+      #panel { width: min(680px, calc(100vw - 36px)); padding: 26px; border: 1px solid rgba(255, 66, 44, .44); border-radius: 8px; background: rgba(6, 8, 10, .94); box-shadow: 0 0 60px rgba(255, 36, 22, .2); }
       h1 { margin: 0 0 10px; font-size: clamp(24px, 4vw, 44px); letter-spacing: 0; }
       p { margin: 8px 0; color: #d6c2bb; line-height: 1.7; }
       button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; margin-top: 14px; padding: 10px 16px; border-radius: 6px; border: 1px solid #6d2d24; background: linear-gradient(180deg, #ff4a2e, #bd2a1f); color: white; font: 800 14px/1 system-ui, sans-serif; cursor: pointer; }
       button:disabled { opacity: .55; cursor: wait; }
+      #stop { position: fixed; right: 18px; top: 18px; z-index: 5; display: none; background: rgba(10, 12, 14, .82); border-color: rgba(255, 84, 64, .72); box-shadow: 0 0 24px rgba(255, 36, 22, .24); }
+      body.playing #stop { display: inline-flex; }
       #status { margin-top: 12px; color: #ffcfbf; font-weight: 700; }
       .spec { color: #9edcff; font-weight: 800; }
     </style>
   </head>
   <body>
     <div id="stageWrap"><iframe id="stage" src="./energy-3d.html?record=1" allow="fullscreen; display-capture"></iframe></div>
-    <div id="overlay">
-      <div id="panel">
-        <h1>YouTube用ブラウザ録画</h1>
-        <p>映像ステージを <span class="spec">16:9</span> に固定して録画します。YouTube標準の横動画向けです。</p>
-        <p>開始後にブラウザの共有確認が出たら、このタブまたはこのウィンドウを選んでください。可能ならブラウザを全画面にしてから開始すると、1920×1080に近い品質で録れます。</p>
-        <button id="start">16:9録画を開始してダウンロード</button>
-        <p id="status"></p>
-      </div>
-    </div>
-
+    <button id="stop">録画停止</button>
+    <div id="overlay"><div id="panel"><h1>YouTube用ブラウザ録画</h1><p>映像ステージを <span class="spec">16:9</span> に固定して録画します。</p><p>自動停止は長めに設定しています。必要なところで右上の「録画停止」を押せます。</p><button id="start">16:9録画を開始してダウンロード</button><p id="status"></p></div></div>
     <script>
       const stage = document.getElementById('stage');
       const startButton = document.getElementById('start');
+      const stopButton = document.getElementById('stop');
       const statusText = document.getElementById('status');
       const STORAGE_KEY = 'routeDirectorPreset';
       let stageLoaded = false;
-
-      stage.addEventListener('load', () => {
-        stageLoaded = true;
-        hideStageUi();
-      });
-
+      let activeRecorder = null;
+      let activeStream = null;
+      let stopTimer = null;
+      stage.addEventListener('load', () => { stageLoaded = true; hideStageUi(); });
       startButton.addEventListener('click', startCapture);
-
+      stopButton.addEventListener('click', stopCapture);
       async function startCapture() {
         startButton.disabled = true;
         statusText.textContent = '共有するタブまたはウィンドウを選んでください。';
-
         try {
-          const stream = await navigator.mediaDevices.getDisplayMedia({
-            video: { frameRate: 60, width: { ideal: 1920 }, height: { ideal: 1080 } },
-            audio: false,
-            preferCurrentTab: true
-          });
+          const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 60, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false, preferCurrentTab: true });
+          activeStream = stream;
           const chunks = [];
           const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
           const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 14000000 });
+          activeRecorder = recorder;
           recorder.addEventListener('dataavailable', (event) => { if (event.data.size) chunks.push(event.data); });
           recorder.addEventListener('stop', () => downloadRecording(chunks, mimeType));
-
-          statusText.textContent = '録画を開始します。画面が16:9ステージに切り替わります。';
+          stream.getVideoTracks()[0]?.addEventListener('ended', stopCapture);
           await waitUntilReady();
           hideStageUi();
           document.body.classList.add('playing');
           await wait(850);
-
           recorder.start(1000);
           restartFilm();
-          const duration = estimateDurationMs() + 1600;
-          setTimeout(() => {
-            if (recorder.state === 'recording') recorder.stop();
-            stream.getTracks().forEach((track) => track.stop());
-          }, duration);
+          const duration = estimateDurationMs();
+          stopTimer = setTimeout(stopCapture, duration);
+          statusText.textContent = `録画中です。最大 ${Math.round(duration / 1000)} 秒で自動停止します。`;
         } catch (error) {
           startButton.disabled = false;
           statusText.textContent = `録画を開始できませんでした: ${error.message}`;
         }
       }
-
+      function stopCapture() {
+        if (stopTimer) clearTimeout(stopTimer);
+        stopTimer = null;
+        if (activeRecorder && activeRecorder.state === 'recording') activeRecorder.stop();
+        if (activeStream) activeStream.getTracks().forEach((track) => track.stop());
+        activeStream = null;
+      }
       function downloadRecording(chunks, mimeType) {
         const blob = new Blob(chunks, { type: mimeType });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
         a.download = `youtube-route-director-${new Date().toISOString().replace(/[:.]/g, '-')}.webm`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-        document.body.classList.remove('playing');
-        startButton.disabled = false;
+        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+        document.body.classList.remove('playing'); startButton.disabled = false; activeRecorder = null;
         statusText.textContent = '録画ファイルをダウンロードしました。';
       }
-
-      function restartFilm() {
-        try {
-          hideStageUi();
-          stage.contentWindow.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', code: 'KeyR', bubbles: true }));
-        } catch (error) {}
-      }
-
-      function hideStageUi() {
-        try {
-          const doc = stage.contentDocument;
-          if (!doc) return;
-          const status = doc.getElementById('status');
-          if (status) status.style.display = 'none';
-          doc.body.style.cursor = 'none';
-        } catch (error) {}
-      }
-
-      async function waitUntilReady() {
-        while (!stageLoaded) await wait(120);
-        await wait(3000);
-      }
-
-      function estimateDurationMs() {
-        let preset = {};
-        try { preset = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch (error) {}
-        const follow = finiteNumber(preset.followDuration, 8200);
-        const outro = finiteNumber(preset.outroDuration, 6500);
-        return 700 + 2500 + follow + outro + 2200;
-      }
-
-      function finiteNumber(value, fallback) {
-        const number = Number(value);
-        return Number.isFinite(number) ? number : fallback;
-      }
-
+      function restartFilm() { try { hideStageUi(); stage.contentWindow.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', code: 'KeyR', bubbles: true })); } catch (error) {} }
+      function hideStageUi() { try { const doc = stage.contentDocument; if (!doc) return; const status = doc.getElementById('status'); if (status) status.style.display = 'none'; doc.body.style.cursor = 'none'; } catch (error) {} }
+      async function waitUntilReady() { while (!stageLoaded) await wait(120); await wait(4500); }
+      function estimateDurationMs() { let preset = {}; try { preset = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch (error) {} const prewarm = finiteNumber(preset.prewarmDuration, 4200); const follow = finiteNumber(preset.followDuration, 8200); const outro = finiteNumber(preset.outroDuration, 6500); return prewarm + 700 + 2500 + follow * 1.9 + outro + 12000; }
+      function finiteNumber(value, fallback) { const number = Number(value); return Number.isFinite(number) ? number : fallback; }
       function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     </script>
   </body>
