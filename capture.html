@@ -24,13 +24,14 @@
   <body>
     <div id="stageWrap"><iframe id="stage" src="./energy-3d.html?record=1" allow="fullscreen; display-capture"></iframe></div>
     <button id="stop">録画停止</button>
-    <div id="overlay"><div id="panel"><h1>YouTube用ブラウザ録画</h1><p>映像ステージを <span class="spec">16:9</span> に固定して録画します。</p><p>自動停止は長めに設定しています。必要なところで右上の「録画停止」を押せます。</p><button id="start">16:9録画を開始してダウンロード</button><p id="status"></p></div></div>
+    <div id="overlay"><div id="panel"><h1>YouTube用ブラウザ録画</h1><p>映像ステージを <span class="spec">16:9</span> に固定して録画します。</p><p>自動停止時間を5倍にしています。終わったら右上の「録画停止」を押してください。</p><button id="start">16:9録画を開始してダウンロード</button><p id="status"></p></div></div>
     <script>
       const stage = document.getElementById('stage');
       const startButton = document.getElementById('start');
       const stopButton = document.getElementById('stop');
       const statusText = document.getElementById('status');
       const STORAGE_KEY = 'routeDirectorPreset';
+      const AUTO_STOP_MULTIPLIER = 5;
       let stageLoaded = false;
       let activeRecorder = null;
       let activeStream = null;
@@ -59,7 +60,7 @@
           restartFilm();
           const duration = estimateDurationMs();
           stopTimer = setTimeout(stopCapture, duration);
-          statusText.textContent = `録画中です。最大 ${Math.round(duration / 1000)} 秒で自動停止します。`;
+          statusText.textContent = `録画中です。最大 ${Math.round(duration / 1000)} 秒で自動停止します。終わったら右上で停止してください。`;
         } catch (error) {
           startButton.disabled = false;
           statusText.textContent = `録画を開始できませんでした: ${error.message}`;
@@ -85,7 +86,7 @@
       function restartFilm() { try { hideStageUi(); stage.contentWindow.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', code: 'KeyR', bubbles: true })); } catch (error) {} }
       function hideStageUi() { try { const doc = stage.contentDocument; if (!doc) return; const status = doc.getElementById('status'); if (status) status.style.display = 'none'; doc.body.style.cursor = 'none'; } catch (error) {} }
       async function waitUntilReady() { while (!stageLoaded) await wait(120); await wait(4500); }
-      function estimateDurationMs() { let preset = {}; try { preset = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch (error) {} const prewarm = finiteNumber(preset.prewarmDuration, 4200); const follow = finiteNumber(preset.followDuration, 8200); const outro = finiteNumber(preset.outroDuration, 6500); return prewarm + 700 + 2500 + follow * 1.9 + outro + 12000; }
+      function estimateDurationMs() { let preset = {}; try { preset = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch (error) {} const prewarm = finiteNumber(preset.prewarmDuration, 4200); const follow = finiteNumber(preset.followDuration, 8200); const outro = finiteNumber(preset.outroDuration, 6500); return (prewarm + 700 + 2500 + follow * 1.9 + outro + 12000) * AUTO_STOP_MULTIPLIER; }
       function finiteNumber(value, fallback) { const number = Number(value); return Number.isFinite(number) ? number : fallback; }
       function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     </script>
